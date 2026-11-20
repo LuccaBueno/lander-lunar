@@ -1,6 +1,6 @@
 {
   "name": "lander-lunar",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Lander Lunar: jogo de pouso, helicóptero e rover pelo Sistema Solar",
   "scripts": {

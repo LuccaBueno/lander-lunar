@@ -1,6 +1,6 @@
 [package]
 name = "lander-lunar"
-version = "1.0.0"
+version = "1.0.1"
 description = "Lander Lunar"
 authors = ["Lucca Bueno Cuzzolin"]
 edition = "2021"
