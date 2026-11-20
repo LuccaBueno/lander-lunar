@@ -1,0 +1,15 @@
+{
+  "name": "lander-lunar",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lander Lunar: jogo de pouso, helicóptero e rover pelo Sistema Solar",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "versao": "node .github/scripts/nova-versao.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}

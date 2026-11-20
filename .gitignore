@@ -1,0 +1,12 @@
+# chaves de assinatura das atualizações: NUNCA enviar ao GitHub
+_chaves-NAO-ENVIAR/
+*.key
+*.key.pub
+
+node_modules/
+src-tauri/target/
+src-tauri/gen/
+dist/
+.DS_Store
+Thumbs.db
+release/

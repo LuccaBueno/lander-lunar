@@ -1,0 +1,1955 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lander Lunar</title>
+<style>
+/* Fontes embutidas: o app funciona sem internet */
+@font-face { font-family: "IBM Plex Mono"; font-weight: 400; font-style: normal; font-display: swap; src: url("fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 500; font-style: normal; font-display: swap; src: url("fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 600; font-style: normal; font-display: swap; src: url("fonts/ibm-plex-mono-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Michroma"; font-weight: 400; font-style: normal; font-display: swap; src: url("fonts/michroma-latin-400-normal.woff2") format("woff2"); }
+
+/* Layout: one screen. Canvas fills the page, instruments sit on top as a thin strip,
+   mission messages appear in a panel at the bottom left so the terrain (or the star chart) stays visible. */
+:root {
+  color-scheme: dark;
+  --void: #0c0e17;        /* sky */
+  --regolith: #171a27;    /* ground mass, panels */
+  --bone: #e9e4d6;        /* vector lines, text */
+  --dim: #8b8fa3;         /* labels */
+  --amber: #ffb454;       /* engine, pads, the one accent */
+  --ok: #7fd6c2;
+  --bad: #ff6b5e;
+  --display: "Michroma", "Eurostile", "Trebuchet MS", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--void);
+  color: var(--bone);
+  font-family: var(--mono);
+  font-size: 14px;
+  overflow: hidden;
+  position: relative;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+/* Instruments */
+#hud {
+  position: absolute; top: 0; left: 0; right: 0;
+  display: flex; flex-wrap: wrap; gap: 6px 22px;
+  padding: 14px 20px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+#hud[hidden], .inst[hidden], #hud [hidden] { display: none; }
+.inst { display: flex; flex-direction: column; gap: 2px; min-width: 74px; }
+.inst .lbl { font-size: 10px; letter-spacing: .14em; color: var(--dim); text-transform: uppercase; }
+.inst .val { font-size: 17px; font-weight: 500; white-space: nowrap; }
+.inst .val small { font-size: 11px; color: var(--dim); font-weight: 400; margin-left: 3px; }
+.inst.ok .val { color: var(--ok); }
+.inst.warn .val { color: var(--amber); }
+.inst.bad .val { color: var(--bad); }
+.spacer { flex: 1 1 0; min-width: 0; }
+#fuelbar { width: 110px; height: 4px; background: #2a2e40; margin-top: 4px; }
+#fuelfill { height: 100%; width: 100%; background: var(--amber); transform-origin: left; }
+.inst.bad #fuelfill { background: var(--bad); }
+
+/* Mission panel */
+#panel {
+  position: absolute; left: 20px; bottom: 20px;
+  width: min(410px, calc(100% - 40px));
+  max-height: calc(100% - 110px); overflow-y: auto;
+  background: color-mix(in srgb, var(--regolith) 93%, transparent);
+  border: 1px solid #353a50;
+  border-left: 3px solid var(--amber);
+  padding: 20px 22px;
+  display: flex; flex-direction: column; gap: 13px;
+}
+#panel[hidden], #panel [hidden] { display: none; }
+#panel.bad { border-left-color: var(--bad); }
+#panel.ok { border-left-color: var(--ok); }
+#panel h1 {
+  font-family: var(--display); font-weight: 400;
+  font-size: 21px; letter-spacing: .06em; line-height: 1.25;
+  margin: 0; text-wrap: balance; text-transform: uppercase;
+}
+#panel p { margin: 0; line-height: 1.55; color: #c9c5ba; }
+#panel dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 13px; }
+#panel dt { color: var(--dim); }
+#panel dd { margin: 0; font-variant-numeric: tabular-nums; }
+kbd {
+  font-family: var(--mono); font-size: 12px;
+  border: 1px solid #4a4f68; border-bottom-width: 2px;
+  padding: 1px 6px; color: var(--bone); background: #1f2333;
+}
+.btns { display: flex; flex-wrap: wrap; gap: 10px; }
+button { font-family: var(--mono); cursor: pointer; }
+#go {
+  font-size: 14px; font-weight: 600; letter-spacing: .04em;
+  color: var(--void); background: var(--amber);
+  border: 0; padding: 11px 18px;
+}
+#go:hover { background: #ffc67a; }
+#go small { font-weight: 400; opacity: .7; margin-left: 8px; }
+#alt {
+  font-size: 13px; color: var(--bone); background: transparent;
+  border: 1px solid #4a4f68; padding: 10px 14px;
+}
+#alt:hover, #alt2:hover { border-color: var(--bone); }
+#alt2 {
+  font-size: 13px; color: var(--bone); background: transparent;
+  border: 1px solid #4a4f68; padding: 10px 14px;
+}
+#upbar { width: 100%; height: 6px; background: #2a2e40; }
+#upbar > div { height: 100%; width: 0; background: var(--amber); transition: width .15s; }
+#choices { display: flex; flex-direction: column; gap: 8px; }
+#choices .hint { font-size: 12px; color: var(--amber); }
+.choice {
+  display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; align-items: baseline; text-align: left;
+  background: #1f2333; color: var(--bone); border: 1px solid #4a4f68; padding: 9px 12px; font-size: 13px;
+}
+.choice:hover { border-color: var(--amber); }
+.choice kbd { grid-row: span 2; align-self: center; }
+.choice b { font-weight: 600; color: var(--amber); }
+.choice span { color: #c9c5ba; font-size: 12px; }
+button:focus-visible { outline: 2px solid var(--bone); outline-offset: 3px; }
+
+#tip, #banner {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  width: max-content; max-width: min(600px, calc(100% - 40px));
+  text-align: center; pointer-events: none; line-height: 1.45;
+}
+#tip { bottom: 50px; background: rgba(23,26,39,.9); border: 1px solid #353a50; padding: 9px 16px; font-size: 13px; }
+#banner { top: 110px; font-size: 13px; color: #c9c5ba; transition: opacity .4s; }
+#banner b { display: block; font-family: var(--display); font-weight: 400; font-size: 15px; letter-spacing: .1em; text-transform: uppercase; color: var(--bone); margin-bottom: 3px; }
+#banner.off { opacity: 0; }
+#legend { position: absolute; right: 20px; bottom: 18px; font-size: 11px; color: var(--dim); pointer-events: none; }
+#tip[hidden], #legend[hidden] { display: none; }
+
+/* Touch controls */
+#touch { display: none; position: absolute; left: 0; right: 0; bottom: 0; padding: 16px; justify-content: space-between; pointer-events: none; }
+#touch .grp { display: flex; gap: 12px; }
+.pad {
+  pointer-events: auto;
+  width: 68px; height: 68px;
+  border: 1px solid #4a4f68; background: rgba(23,26,39,.75);
+  color: var(--bone); font-size: 22px;
+}
+.pad.fire { width: 92px; color: var(--amber); border-color: var(--amber); font-size: 13px; letter-spacing: .08em; }
+.pad.on { background: #2c3148; }
+@media (pointer: coarse) {
+  #touch { display: flex; }
+  #touch[hidden] { display: none; }
+  #panel { bottom: 104px; max-height: calc(100% - 200px); }
+  #panel.low { bottom: 20px; max-height: calc(100% - 110px); }
+  .keys-only { display: none !important; }
+  #tip { bottom: 104px; }
+}
+@media (max-width: 520px) {
+  #hud { gap: 6px 16px; padding: 10px 16px; }
+  .inst { min-width: 70px; }
+  .inst .val { font-size: 15px; }
+  .spacer { display: none; }
+  #legend { display: none; }
+}
+</style>
+</head>
+<body>
+<canvas id="c" aria-label="Lander Lunar: área de jogo"></canvas>
+
+<div id="hud">
+  <div class="inst" id="iAlt"><span class="lbl">Altitude</span><span class="val"><span id="vAlt">0</span><small>m</small></span></div>
+  <div class="inst" id="iVx"><span class="lbl">Lateral</span><span class="val"><span id="vVx">0,0</span><small>m/s<span id="vxMax"> · máx 4,0</span></small></span></div>
+  <div class="inst" id="iVy"><span class="lbl">Descida</span><span class="val"><span id="vVy">0,0</span><small>m/s · máx <span id="vVyMax">6,5</span></small></span></div>
+  <div class="inst" id="iAng"><span class="lbl">Inclinação</span><span class="val"><span id="vAng">0</span><small>°<span id="angMax"> · máx 12</span></small></span></div>
+  <div class="inst" id="iFuel"><span class="lbl">Combustível</span><span class="val"><span id="vFuel">100</span><small id="vFuelMax">/ 100</small></span><div id="fuelbar"><div id="fuelfill"></div></div></div>
+  <div class="inst" id="iWind" hidden><span class="lbl">Vento</span><span class="val"><span id="vWind">0,0</span><small>m/s²</small></span></div>
+  <div class="inst" id="iObj" hidden><span class="lbl">Fotos</span><span class="val" id="vObj">0/2</span></div>
+  <div class="spacer"></div>
+  <div class="inst"><span class="lbl">Fase</span><span class="val" id="vLevel">Lua 1/2</span></div>
+  <div class="inst" id="iLives"><span class="lbl">Naves</span><span class="val" id="vLives">3</span></div>
+  <div class="inst"><span class="lbl">Pontos</span><span class="val" id="vScore">0</span></div>
+  <div class="inst"><span class="lbl">Melhor</span><span class="val" id="vBest">0</span></div>
+</div>
+
+<div id="panel" role="dialog" aria-live="polite">
+  <h1 id="pTitle">Lander Lunar</h1>
+  <p id="pText"></p>
+  <dl id="pList"></dl>
+  <div id="choices" hidden></div>
+  <div class="btns">
+    <button id="go" type="button"><span id="goText">Continuar</span><small class="keys-only">Enter</small></button>
+    <button id="alt" type="button" hidden></button>
+    <button id="alt2" type="button" hidden></button>
+  </div>
+</div>
+
+<div id="touch">
+  <div class="grp">
+    <button class="pad" id="tL" type="button" aria-label="Esquerda">◀</button>
+    <button class="pad" id="tR" type="button" aria-label="Direita">▶</button>
+  </div>
+  <button class="pad fire" id="tF" type="button" aria-label="Ação principal">MOTOR</button>
+</div>
+
+<div id="banner" class="off" aria-live="polite"><b id="bTitle"></b><span id="bText"></span></div>
+<div id="tip" hidden></div>
+<div id="legend" class="keys-only" hidden></div>
+
+<script>
+(() => {
+  'use strict';
+
+  // ---------- Constantes ----------
+  const H = 700;                 // altura do mundo (px lógicos)
+  const M = 4;                   // px por metro (só para os instrumentos)
+  const THRUST = 55;             // aceleração do motor do módulo (px/s²)
+  const ROT = 2.6;               // velocidade de giro no modo normal (rad/s)
+  const VX_BASE = 16;             // limite lateral de pouso (px/s) = 4,0 m/s
+  const VY_MAX = 26;             // limite de descida           = 6,5 m/s
+  const ANG_DEG = 12, ANG_MAX = ANG_DEG * Math.PI / 180;
+  const FOOT_Y = 14;
+  const MAPS = 2;                // mapas por fase
+  const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const coarse = matchMedia('(pointer: coarse)').matches;
+
+  // ---------- Fases ----------
+  // g em px/s² (a Lua é a referência; os outros seguem a gravidade real, comprimida para continuar jogável).
+  // gen escolhe o gerador de terreno; w, rough, wind, meteor e erupt têm um valor por mapa.
+  const MARS = { sky: '#140d0e', ground: '#2a1715', line: '#eaa88e' };
+  const ASTROS = [
+    { id: 'lua', name: 'Lua', sub: 'satélite da Terra', gReal: '1,62', g: 20, gen: 'lua', w: [1300, 1700], wind: [0, 0], drag: 0, meteor: [0, 0],
+      pal: { sky: '#0c0e17', ground: '#171a27', line: '#e9e4d6' }, hazards: 'crateras',
+      desc: 'Planícies cobertas de crateras, sem atmosfera e sem surpresas. O melhor lugar para aprender a pousar.' },
+    { id: 'marte', name: 'Marte', sub: 'o planeta vermelho', gReal: '3,71', g: 27, gen: 'marte', w: [1500, 1900], wind: [7, 12], drag: 0, meteor: [0, 0],
+      pal: MARS, hazards: 'gravidade forte, vento, cânion e mesas',
+      desc: 'Mesas de topo plano, paredões e um cânion profundo. A gravidade puxa com força e rajadas de vento empurram a nave de lado.' },
+    { id: 'europa', name: 'Europa', sub: 'lua de Júpiter', gReal: '1,31', g: 18, gen: 'europa', narrow: true, w: [1600, 2000], wind: [0, 0], drag: 0, meteor: [0, 0],
+      pal: { sky: '#0a1118', ground: '#13232d', line: '#bfe3ee' }, hazards: 'fendas no gelo, gêiseres, plataformas estreitas',
+      desc: 'Planície de gelo rachada por fendas. Gêiseres jorram das fendas de tempos em tempos e jogam a nave para cima.' },
+    { id: 'tita', name: 'Titã', sub: 'lua de Saturno', gReal: '1,35', g: 18, gen: 'tita', w: [1700, 2100], wind: [12, 18], drag: 0.22, meteor: [0, 0],
+      pal: { sky: '#15120b', ground: '#292312', line: '#dbd09c' }, hazards: 'atmosfera densa, vento forte, lagos de metano',
+      desc: 'Dunas suaves e lagos de metano: quem pousa num lago afunda. O ar denso freia a nave e o vento é forte.' },
+    { id: 'mercurio', name: 'Mercúrio', sub: 'vizinho do Sol', gReal: '3,70', g: 27, gen: 'mercurio', w: [1700, 2200], wind: [0, 0], drag: 0, meteor: [6.5, 4.8],
+      pal: { sky: '#0e0e11', ground: '#1f1f24', line: '#cdcdd4' }, hazards: 'gravidade forte, meteoros, crateras fundas e escarpa',
+      desc: 'Crateras fundas com pico central e uma escarpa que corta o mapa. Gravidade forte e chuva de meteoros.' },
+    { id: 'io', name: 'Io', sub: 'lua de Júpiter', gReal: '1,80', g: 21, gen: 'io', narrow: true, w: [1900, 2400], wind: [6, 10], drag: 0, meteor: [0, 0], erupt: [5.5, 4],
+      pal: { sky: '#12110a', ground: '#262510', line: '#e6e07c' }, hazards: 'vulcões em erupção, lagos de lava, vento',
+      desc: 'O astro mais vulcânico do Sistema Solar: os vulcões lançam rochas para o alto e há lagos de lava entre eles.' },
+  ];
+  const site = (id, name, sub, gen, w, wind, hazards, desc) =>
+    ({ id, name, sub, gReal: '3,71', g: 30, gen, w, wind, drag: 0, meteor: [0, 0], pal: MARS, hazards, desc });
+  const HELI_SITES = [
+    site('h-jezero', 'Jezero', 'campo de voo na cratera', 'jezero', [1500, 1900], [0, 4], 'nenhum',
+      'Decole, fotografe os alvos pairando sobre eles e pouse em DESTINO. Cada aro atravessado vale +50.'),
+    site('h-seitah', 'Séítah', 'campo de dunas', 'dunes', [1800, 2200], [6, 10], 'dunas, rajadas de vento',
+      'Dunas onde o rover não passa: só o helicóptero chega. O vento empurra de lado.'),
+    site('h-delta', 'Delta', 'falésias do antigo rio', 'mesa', [2000, 2400], [8, 13], 'falésias altas, vento forte',
+      'Paredões do delta de um rio seco. Suba por cima das falésias e cuidado com as rajadas.'),
+  ];
+  const ROVER_SITES = [
+    site('r-jezero', 'Jezero', 'piso da cratera', 'jezero', [2200, 2800], [0, 0], 'pedras rolando, lombadas',
+      'Pedras rolam na sua direção: pule por cima delas. Pare sobre os pontos de coleta e leve as amostras ao DEPÓSITO.'),
+    site('r-seitah', 'Séítah', 'campo de dunas', 'dunes', [2600, 3200], [0, 0], 'tempestade de areia, areia fofa',
+      'Uma tempestade de areia vem atrás de você: não pare demais. Use as dunas como rampa; tempo no ar vale pontos.'),
+    site('r-delta', 'Delta', 'rampas do antigo rio', 'mesa', [2600, 3200], [0, 0], 'fendas para saltar, pedras rolando',
+      'Fendas largas cortam o caminho: pule na beirada. No segundo mapa, pedras rolam pelas rampas.'),
+  ];
+  const MODES = {
+    lander: { name: 'Módulo de pouso', phases: ASTROS, unit: 'Naves', lost: 'Módulo perdido', chart: 'MAPA DE ASTROS',
+      about: 'Pouse o módulo em seis astros, cada um com seu relevo e seus perigos.' },
+    heli: { name: 'Ingenuity', phases: HELI_SITES, unit: 'Helis', lost: 'Helicóptero perdido', chart: 'INGENUITY · MARTE',
+      about: 'Voe o helicóptero em Marte: fotografe os alvos e pouse no destino.' },
+    rover: { name: 'Perseverance', phases: ROVER_SITES, unit: 'Rovers', lost: 'Rover perdido', chart: 'PERSEVERANCE · MARTE',
+      about: 'Corra com o rover em Marte: pule pedras e fendas, colete amostras e fuja da tempestade.' },
+  };
+
+  const css = getComputedStyle(document.documentElement);
+  const COL = {};
+  for (const n of ['void', 'regolith', 'bone', 'dim', 'amber', 'ok', 'bad']) COL[n] = css.getPropertyValue('--' + n).trim();
+
+  const $ = id => document.getElementById(id);
+  const canvas = $('c'), ctx = canvas.getContext('2d');
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const randint = (a, b) => Math.floor(rand(a, b + 1));
+  const fmt = (v, d = 1) => v.toFixed(d).replace('.', ',');
+  const num = v => Math.round(v).toLocaleString('pt-BR');
+
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem('lander-lunar-' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem('lander-lunar-' + k, JSON.stringify(v)); } catch (e) {} },
+  };
+
+  // ---------- Progresso salvo ----------
+  const freshSave = () => {
+    const s = { modes: {}, up: { tank: 0, engine: 0, legs: 0, eco: 0, shield: 0, life: 0 } };
+    for (const m in MODES) s.modes[m] = { unlocked: 1, best: {}, done: {} };
+    return s;
+  };
+  function mergeSave(a, b) {           // fica com o progresso mais avançado de cada campo
+    if (!b || typeof b !== 'object') return a;
+    if (!b.modes && b.unlocked !== undefined) b = { modes: { lander: { unlocked: b.unlocked, best: b.best, done: b.done } }, up: b.up };   // formato antigo
+    for (const m in MODES) {
+      const x = a.modes[m], y = (b.modes && b.modes[m]) || {};
+      x.unlocked = clamp(Math.max(x.unlocked, y.unlocked | 0), 1, MODES[m].phases.length);
+      for (const k in (y.best || {})) x.best[k] = Math.max(x.best[k] || 0, y.best[k] || 0);
+      for (const k in (y.done || {})) if (y.done[k]) x.done[k] = true;
+    }
+    for (const k in a.up) a.up[k] = Math.max(a.up[k], (b.up && b.up[k]) | 0);
+    return a;
+  }
+  let save = mergeSave(freshSave(), store.get('campanha', null));
+  const persist = () => store.set('campanha', save);
+  const up = () => save.up;
+
+  // ---------- Estado ----------
+  let W = 1300, cw = 0, ch = 0, dpr = 1, scale = 1, viewW = 1300, hudH = 60;
+  let state = 'title';           // title | map | play | paused | landed | crashed | over
+  let mode = 'lander', astroIdx = 0, astro = ASTROS[0], mapIdx = 0, sel = 0;
+  let lives = 3, score = 0;
+  let diff = store.get('dif', store.get('dificil', false) ? 2 : 1);   // 0 fácil, 1 normal, 2 difícil
+  if (![0, 1, 2].includes(diff)) diff = 1;
+  let hard = diff === 2, easy = diff === 0;
+  const DIFFS = [
+    { name: 'Fácil', desc: 'Limites de pouso 25% maiores, 20% menos consumo, +1 unidade por fase, vento e perigos mais brandos. Pontos ×0,75.' },
+    { name: 'Normal', desc: 'O jogo como foi pensado: controles com ajuda e guia de trajetória. Pontos ×1.' },
+    { name: 'Difícil', desc: 'Giro com inércia, helicóptero sem nivelamento, rover com menos tração e sem guia de trajetória. Pontos ×1,5.' },
+  ];
+  let autoZoom = store.get('zoom', true) !== false;
+  let tut = store.get('tut', null) || { lander: !!store.get('tutorial', false) };
+  let seg = 22, heights = [], pads = [], stars = [], items = [], dust = [], zones = [], vents = [], targets = [], depot = null;
+  let ship = null, frags = [], sparks = [], meteors = [], floats = [], choices = [], mapPos = [];
+  let meteorT = 3, alarmT = 0, bannerT = 0, usedThrust = 0, usedTurn = 0, windPh = [0, 0], windPos = 0, stuckT = 0;
+  const cam = { x: 650, y: H / 2, z: 1 };
+  let shake = 0, stateTime = 0, lastGain = 0, time = 0, panShift = 0;
+  let boulders = [], boulderT = 3, stormX = null, airT = 0, jumpBuf = 0;
+  // o que anima cada local do rover: pedras rolando (intervalo em s) ou tempestade perseguindo (px/s), por mapa
+  const ROVER_HAZ = { 'r-jezero': { boulder: [6.5, 4.2] }, 'r-seitah': { storm: [135, 155] }, 'r-delta': { boulder: [0, 5] } };
+  const roverHaz = () => ROVER_HAZ[astro.id] || {};
+  let goFn = null, altFn = null, alt2Fn = null;
+  const keys = { left: false, right: false, thrust: false };
+
+  const S = () => save.modes[mode];
+  const phases = () => MODES[mode].phases;
+  const gravity = () => mode === 'rover' ? 90 : astro.g;   // o rover usa gravidade de jogo de plataforma, para pulos rápidos
+  const burnRate = () => (mode === 'lander' ? 5.6 : mode === 'heli' ? 4.3 : 2.8) * Math.pow(0.88, up().eco) * (easy ? 0.8 : 1);
+  const thrust = () => (mode === 'heli' ? 70 : mode === 'rover' ? 110 : THRUST) * (1 + 0.1 * up().engine);
+  const fuelMax = () => 100 + 20 * up().tank;
+  const vyMax = () => (VY_MAX + 4 * up().legs) * (easy ? 1.25 : 1);
+  const vxMax = () => VX_BASE * (easy ? 1.25 : 1);
+  const impactMax = () => (210 + 25 * up().legs) * (easy ? 1.3 : 1);         // rover: batida que a suspensão aguenta (px/s)
+  const maxLives = () => 3 + up().life + (easy ? 1 : 0);
+  const scoreMult = () => hard ? 1.5 : easy ? 0.75 : 1;
+  const footX = () => mode === 'heli' ? 10 : 12;
+  const windMax = () => mode === 'rover' ? 0 : astro.wind[mapIdx] * (easy ? 0.6 : 1);
+  const windNow = () => windMax() * (0.62 * Math.sin(time * 0.45 + windPh[0]) + 0.38 * Math.sin(time * 1.2 + windPh[1]));
+  const mapKey = () => astro.id + '-' + mapIdx;
+  const targetsLeft = () => targets.filter(t => !t.done).length;
+
+  // ---------- Melhorias: uma por mapa, na primeira vez que ele é concluído; valem para sempre e em todos os modos ----------
+  const UPG = [
+    { key: 'tank', max: 5, names: ['Tanque maior', 'Bateria maior', 'Bateria maior'], descs: ['+20 de combustível por tentativa', '+20 de bateria', '+20 de energia'] },
+    { key: 'engine', max: 4, names: ['Motor reforçado', 'Rotores reforçados', 'Motores reforçados'], descs: ['+10% de empuxo', '+10% de sustentação', '+10% de tração'] },
+    { key: 'legs', max: 3, names: ['Sapatas reforçadas', 'Trem de pouso reforçado', 'Suspensão reforçada'], descs: ['Aguenta +1,0 m/s de descida no pouso', 'Aguenta +1,0 m/s de descida no pouso', 'Aguenta batidas e saltos mais fortes'] },
+    { key: 'eco', max: 4, names: ['Injeção eficiente', 'Consumo menor', 'Consumo menor'], descs: ['12% menos consumo', '12% menos consumo', '12% menos consumo'] },
+    { key: 'shield', max: 1, only: 'lander', names: ['Escudo'], descs: ['Absorve um meteoro ou rocha por tentativa'] },
+    { key: 'life', max: 2, names: ['Nave reserva', 'Helicóptero reserva', 'Rover reserva'], descs: ['+1 unidade em toda fase, em todos os modos', '+1 unidade em toda fase, em todos os modos', '+1 unidade em toda fase, em todos os modos'] },
+  ];
+  const mi = () => mode === 'lander' ? 0 : mode === 'heli' ? 1 : 2;
+  const upName = u => u.names[Math.min(mi(), u.names.length - 1)];
+  const upSummary = () => UPG.filter(u => up()[u.key] > 0).map(u => upName(u) + ' ' + up()[u.key] + '/' + u.max).join(', ') || 'nenhuma ainda';
+
+  // ---------- Som ----------
+  let actx = null, engineGain = null, noiseBuf = null, lpNode = null, muted = false;
+  function initAudio() {
+    if (actx) { if (actx.state === 'suspended') actx.resume().catch(() => {}); return; }
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      actx = new AC();
+      noiseBuf = actx.createBuffer(1, actx.sampleRate * 2, actx.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      let last = 0;
+      for (let i = 0; i < d.length; i++) {            // ruído marrom
+        last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02;
+        d[i] = last * 3.5;
+      }
+      const src = actx.createBufferSource();
+      src.buffer = noiseBuf; src.loop = true;
+      const lp = actx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 520; lpNode = lp;
+      engineGain = actx.createGain(); engineGain.gain.value = 0;
+      src.connect(lp).connect(engineGain).connect(actx.destination);
+      src.start();
+    } catch (e) { actx = null; }
+  }
+  function setEngine(level, freq = 520) {
+    if (!actx || !engineGain) return;
+    const g = muted ? 0 : level;
+    if (g === lastGain) return;
+    lastGain = g;
+    lpNode.frequency.setTargetAtTime(freq, actx.currentTime, 0.05);
+    engineGain.gain.setTargetAtTime(g, actx.currentTime, 0.04);
+  }
+  function beep(freq, dur, when = 0) {
+    if (!actx || muted) return;
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = 'square'; o.frequency.value = freq;
+    const t = actx.currentTime + when;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.07, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(actx.destination);
+    o.start(t); o.stop(t + dur + 0.02);
+  }
+  function boom(vol = 0.9) {
+    if (!actx || muted) return;
+    const src = actx.createBufferSource(); src.buffer = noiseBuf;
+    const g = actx.createGain(); const t = actx.currentTime;
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+    src.connect(g).connect(actx.destination);
+    src.start(t); src.stop(t + 1.2);
+  }
+
+  // ---------- Avisos ----------
+  function showBanner(title, text, secs = 4) {
+    $('bTitle').textContent = title; $('bText').textContent = text;
+    const b = $('banner'); b.style.top = ((state === 'map' ? 96 : hudH + 52)) + 'px'; b.classList.remove('off');
+    bannerT = secs;
+  }
+  function levelIntro() {
+    let text = mapIdx === 0 ? astro.desc : 'Mapa maior e mais difícil.';
+    if (astro.id === 'lua') text = mapIdx === 0 ? 'Pouse numa plataforma laranja. Estrelas no céu valem +150 pontos.' : 'Mapa maior, com crateras mais fundas. Cápsulas F reabastecem 30 de combustível.';
+    showBanner(astro.name + ' · mapa ' + (mapIdx + 1) + ' de ' + MAPS, text, 6);
+  }
+  function setTip(t) {
+    const el = $('tip');
+    if (el.dataset.t === t) return;
+    el.dataset.t = t; el.textContent = t; el.hidden = !t;
+  }
+  function updateTip() {
+    if (state !== 'play') return setTip('');
+    const learning = astroIdx === 0 && mapIdx === 0 && !tut[mode];
+    if (mode === 'rover') {
+      const near = targets.find(t => !t.done && Math.abs(t.x - ship.x) < 60);
+      if (ship.fuel <= 0) return setTip('Sem energia: o rover só anda no embalo.');
+      if (stormX !== null && ship.x < stormX) return setTip('Dentro da tempestade: a energia está sendo sugada. Acelere para sair!');
+      if (near && Math.hypot(ship.vx, ship.vy) > 32) return setTip('Freie sobre o ponto de coleta: a broca desce sozinha.');
+      if (ship.x > depot.x0 && targetsLeft()) return setTip('Faltam amostras: volte aos pontos de coleta marcados no radar.');
+      if (learning) {
+        if (usedTurn < 0.5) return setTip(coarse ? 'Acelere com ▶ (ré com ◀).' : 'Acelere com → (ré com ←).');
+        if (usedThrust < 1) return setTip(coarse ? 'Toque em PULO para saltar pedras e pegar estrelas.' : 'Aperte ↑ (ou Espaço) para pular pedras e pegar estrelas.');
+        if (targetsLeft()) return setTip('Pare sobre um ponto de coleta (triângulo laranja) para coletar a amostra.');
+        return setTip('Amostras coletadas: leve tudo ao DEPÓSITO, no fim do mapa.');
+      }
+      return setTip('');
+    }
+    if (ship.fuel <= 0 && !ship.grounded) return setTip(mode === 'heli' ? 'Bateria esgotada: os rotores pararam.' : 'Sem combustível: a nave segue em queda livre.');
+    if (mode === 'heli') {
+      const onDest = ship.grounded && pads.some(p => p.kind === 'dest' && ship.x > p.x0 && ship.x < p.x1);
+      if (onDest && targetsLeft()) return setTip('Faltam fotos: decole e paire dentro dos círculos tracejados.');
+      if (ship.grounded && ship.fuel < fuelMax() - 1 && usedThrust > 1) return setTip('Pousado: o painel solar está recarregando a bateria.');
+      if (learning) {
+        if (usedThrust < 0.4) return setTip(coarse ? 'Segure ROTOR para decolar.' : 'Segure ↑ (ou W / Espaço) para ligar os rotores e decolar.');
+        if (usedTurn < 0.3) return setTip((coarse ? 'Incline com ◀ ▶' : 'Incline com ← →') + (hard ? '.' : '; ao soltar, o helicóptero se nivela sozinho.'));
+        if (targetsLeft()) return setTip('Paire dentro do círculo tracejado até a foto completar.');
+        return setTip('Fotos feitas: pouse devagar em DESTINO. Pousar em chão plano recarrega a bateria.');
+      }
+      if (ship.y < -20) return setTip('O helicóptero saiu por cima da tela; a seta mostra onde ele está.');
+      return setTip('');
+    }
+    const alt = terrainY(ship.x) - (ship.y + FOOT_Y);
+    if (learning) {
+      if (usedThrust < 0.4) return setTip(coarse ? 'Segure MOTOR para frear a queda.' : 'Segure ↑ (ou W / Espaço) para ligar o motor e frear a queda.');
+      if (usedTurn < 0.3) return setTip(coarse ? 'Use ◀ ▶ para inclinar: o motor empurra a nave para o lado em que ela aponta.' : 'Incline com ← → : o motor empurra a nave para o lado em que ela aponta.');
+      if (alt > 200) return setTip(hard ? 'Leve a nave até uma plataforma laranja. As mais estreitas valem mais pontos.' : 'Os pontinhos mostram a queda com o motor desligado. Leve o X até uma plataforma laranja.');
+      return setTip('Pouse devagar e em pé: Lateral, Descida e Inclinação precisam estar verdes no topo.');
+    }
+    if (ship.y < -20) return setTip('A nave saiu por cima da tela; a seta mostra onde ela está.');
+    setTip('');
+  }
+
+  // ---------- Terreno: um gerador por tipo de relevo ----------
+  function genTerrain(N) {
+    const h = new Array(N + 1), g = astro.gen, second = mapIdx === 1;
+    const p1 = rand(0, 6.28), p2 = rand(0, 6.28), p3 = rand(0, 6.28);
+    const noise = a => rand(-a, a);
+    const ventIdx = [];
+    for (let i = 0; i <= N; i++) {
+      if (g === 'lua' || g === 'mercurio') h[i] = 105 + 38 * Math.sin(i * 0.07 + p1) + 14 * Math.sin(i * 0.29 + p2) + noise(g === 'lua' ? 5 : 10);
+      else if (g === 'marte' || g === 'mesa') h[i] = Math.round((150 + 85 * Math.sin(i * 0.05 + p1) + 48 * Math.sin(i * 0.14 + p2)) / 48) * 48 + noise(4);   // degraus: mesas e paredões
+      else if (g === 'europa') h[i] = 125 + 16 * Math.sin(i * 0.09 + p1) + noise(5);                 // planície de gelo
+      else if (g === 'tita' || g === 'dunes') { const s = Math.sin(i * 0.095 + p1), e = Math.sin(i * 0.031 + p2); h[i] = 80 + 95 * s * s * (0.6 + 0.4 * e * e) + 9 * Math.sin(i * 0.33 + p3) + noise(2); }   // dunas lisas
+      else if (g === 'io') h[i] = 62 + 14 * Math.sin(i * 0.12 + p1) + noise(7);                      // planície baixa entre vulcões
+      else h[i] = 100 + 30 * Math.sin(i * 0.08 + p1) + 13 * Math.sin(i * 0.22 + p2) + noise(4);     // jezero: piso de cratera
+    }
+    const crater = (c, r, d, peak) => {               // bacia com borda levantada e, nas grandes, pico central
+      for (let j = Math.max(1, c - r - 2); j <= Math.min(N - 1, c + r + 2); j++) {
+        const t = Math.abs(j - c) / r;
+        if (t < 1) h[j] -= d * (1 - t * t); else if (t < 1.5) h[j] += d * 0.6 * (1.5 - t);
+      }
+      if (peak) h[c] += d * 0.45;
+    };
+    if (g === 'lua' || g === 'mercurio' || g === 'jezero') {
+      const count = Math.round(N / (g === 'jezero' ? 24 : 11));
+      for (let k = 0; k < count; k++) {
+        const r = randint(2, g === 'mercurio' ? 7 : 5), c = randint(r + 3, N - r - 3);
+        crater(c, r, r * (g === 'mercurio' ? 13 : g === 'jezero' ? 5 : 12) + (second ? 6 : 0), g === 'mercurio' && r >= 5);
+      }
+    }
+    if (g === 'mercurio') {                           // escarpa: um degrau alto que corta o mapa
+      const c = randint(Math.floor(N * 0.3), Math.floor(N * 0.7)), left = Math.random() < 0.5;
+      for (let j = 0; j <= N; j++) if (left ? j < c : j > c) h[j] += 85;
+    }
+    if (g === 'marte') {                              // cânion
+      const wd = randint(6, 9), c = randint(Math.floor(N * 0.25), Math.floor(N * 0.75) - wd);
+      for (let j = c; j < c + wd; j++) h[j] = 36 + noise(4);
+    }
+    if (g === 'europa') {                             // fendas fundas, pináculos de gelo e gêiseres
+      let i = randint(4, 8);
+      while (i < N - 4) {
+        const d = rand(60, 105) + (second ? 15 : 0);
+        h[i] -= d; h[i + 1] -= d * rand(0.3, 0.9);
+        if (Math.random() < 0.5) ventIdx.push(i);
+        const sp = i + randint(2, 4);
+        if (sp < N - 3 && Math.random() < 0.6) h[sp] += rand(28, 60);
+        i += randint(6, 10);
+      }
+    }
+    if (g === 'io') {                                 // cones vulcânicos com caldeira
+      const cones = second ? 3 : 2;
+      for (let k = 0; k < cones; k++) {
+        const c = Math.round(N * (k + 0.5 + rand(-0.2, 0.2)) / cones), wd = randint(6, 9), hc = rand(150, 215);
+        for (let j = Math.max(1, c - wd); j <= Math.min(N - 1, c + wd); j++) h[j] += hc * Math.pow(1 - Math.abs(j - c) / wd, 1.25);
+        h[c] -= 34; ventIdx.push(c);
+      }
+    }
+    for (let i = 0; i <= N; i++) h[i] = clamp(h[i], 28, H * 0.6);
+    return { h, ventIdx };
+  }
+  function limitSlope(h, m) {                          // transforma paredões em rampas que o rover consegue subir
+    for (let i = 0; i < h.length - 1; i++) h[i + 1] = Math.min(h[i + 1], h[i] + m);
+    for (let i = h.length - 2; i >= 0; i--) h[i] = Math.min(h[i], h[i + 1] + m);
+  }
+
+  function buildLevel() {
+    resize();
+    W = Math.max(Math.ceil(viewW), astro.w[mapIdx]);
+    const N = Math.round(W / 22);
+    seg = W / N;
+    const { h, ventIdx } = genTerrain(N);
+    heights = h; pads = []; zones = []; vents = []; targets = []; depot = null; items = [];
+    const taken = [];                                  // faixas de índices já ocupadas
+    const isFree = (a, b) => a > 1 && b < N - 1 && !taken.some(t => a <= t[1] && b >= t[0]);
+    const flat = (a, b, v) => { for (let k = a; k <= b; k++) h[k] = v; };
+    const second = mapIdx === 1;
+
+    if (mode === 'lander') {
+      // três plataformas, uma em cada terço do mapa
+      const mults = [1, 2, 5].sort(() => Math.random() - 0.5);
+      for (let j = 0; j < 3; j++) {
+        const mult = mults[j];
+        let len = mult === 1 ? 5 : mult === 2 ? 4 : 3;
+        if (astro.narrow || second) len = Math.max(2, len - 1);
+        const a = Math.floor(N * j / 3) + 2, b = Math.floor(N * (j + 1) / 3) - 2 - len;
+        const start = randint(a, Math.max(a, b));
+        flat(start, start + len, h[start + (len >> 1)]);
+        pads.push({ x0: start * seg, x1: (start + len) * seg, y: H - h[start], mult, label: '×' + mult });
+        taken.push([start - 2, start + len + 2]);
+      }
+      for (const v of ventIdx) if (isFree(v - 1, v + 1)) { vents.push({ i: v, type: astro.gen === 'io' ? 'volcano' : 'geyser', ph: rand(0, 6.5) }); taken.push([v - 2, v + 2]); }
+      // lagos de metano (Titã) e de lava (Io)
+      const liquid = astro.gen === 'tita' ? 'lake' : astro.gen === 'io' ? 'lava' : null;
+      if (liquid) {
+        let want = second ? 3 : 2, tries = 0;
+        while (want > 0 && tries++ < 200) {
+          const len = randint(4, 7), s = randint(2, N - len - 2);
+          if (!isFree(s - 1, s + len + 1)) continue;
+          const slice = h.slice(s, s + len + 1);
+          if (liquid === 'lava' && Math.max(...slice) > 125) continue;
+          flat(s, s + len, Math.min(...slice));
+          zones.push({ x0: s * seg + 2, x1: (s + len) * seg - 2, type: liquid });
+          taken.push([s - 1, s + len + 1]); want--;
+        }
+      }
+    } else if (mode === 'heli') {
+      flat(2, 6, h[4]); flat(N - 7, N - 3, h[N - 5]);
+      pads.push({ x0: 2.5 * seg, x1: 5.5 * seg, y: H - h[4], kind: 'base', label: 'BASE' });
+      pads.push({ x0: (N - 6.5) * seg, x1: (N - 3.5) * seg, y: H - h[N - 5], kind: 'dest', label: 'DESTINO' });
+      const n = second ? 3 : 2;
+      for (let k = 0; k < n; k++) targets.push({ x: seg * Math.round(N * ((k + 1) / (n + 1) + rand(-0.06, 0.06))), done: false, prog: 0 });
+      const rn = second ? 5 : 4;                        // aros no caminho
+      for (let k = 0; k < rn; k++) {
+        const x = seg * Math.round(N * (0.14 + 0.72 * (k + 0.5) / rn + rand(-0.03, 0.03)));
+        items.push({ type: 'ring', x, y: Math.max(120, terrainY(x) - rand(125, 215)), got: false, p: rand(0, 6.28) });
+      }
+    } else {                                           // rover
+      if (astro.gen !== 'mesa') for (let i = 1; i < N; i++) h[i] = (h[i - 1] + 2 * h[i] + h[i + 1]) / 4;
+      const maxStep = seg * (astro.gen === 'dunes' ? 0.36 : 0.5);
+      limitSlope(h, maxStep);
+      flat(0, 6, h[3]); flat(N - 7, N, h[N - 4]);
+      taken.push([0, 8], [N - 9, N]);
+      depot = { x0: (N - 5) * seg, x: (N - 3) * seg };
+      const n = second ? 3 : 2;
+      for (let k = 0; k < n; k++) {
+        const i = Math.round(N * ((k + 1) / (n + 1) * 0.8 + 0.1 + rand(-0.04, 0.04)));
+        flat(i - 1, i + 1, h[i]);
+        targets.push({ x: i * seg, done: false, prog: 0 }); taken.push([i - 3, i + 3]);
+      }
+      if (astro.gen !== 'mesa') limitSlope(h, maxStep);
+      if (astro.gen === 'jezero') {                    // pedras: lombadas curtas
+        for (let i = 10; i < N - 10; i += randint(6, 10)) if (isFree(i, i)) h[i] += rand(9, 15) + (second ? 4 : 0);
+      } else if (astro.gen === 'dunes') {              // areia fofa nos vales
+        let want = second ? 4 : 3, tries = 0;
+        while (want > 0 && tries++ < 200) {
+          const len = randint(4, 6), s = randint(9, N - len - 10);
+          if (!isFree(s, s + len)) continue;
+          zones.push({ x0: s * seg, x1: (s + len) * seg, type: 'sand' }); taken.push([s - 1, s + len + 1]); want--;
+        }
+      } else {                                         // delta: fendas para saltar, com pista de embalo antes
+        let want = second ? 4 : 3, tries = 0;
+        while (want > 0 && tries++ < 300) {
+          const p = randint(16, N - 16);
+          if (!isFree(p - 7, p + 8)) continue;
+          const v = h[p - 3];
+          flat(p - 7, p, v); h[p + 1] = h[p + 2] = Math.max(20, v - 85); flat(p + 3, p + 8, v - 14);
+          zones.push({ x0: p * seg + 3, x1: (p + 3) * seg - 3, type: 'pit' }); taken.push([p - 8, p + 9]); want--;
+        }
+        limitSlopeOutside(h, seg * 0.5);
+      }
+    }
+
+    stars = [];
+    const count = Math.round((W + 1400) / 8);
+    for (let i = 0; i < count; i++) {
+      stars.push({ x: rand(-700, W + 700), y: rand(-350, H * 0.8), r: Math.random() < 0.12 ? 1.4 : 0.8, p: rand(0, 6.28), tw: Math.random() < 0.25 });
+    }
+    dust = [];
+    for (let i = 0; i < 46; i++) dust.push({ a: Math.random(), y: rand(20, H * 0.82), s: rand(0.5, 1.4) });
+    windPh = [rand(0, 6.28), rand(0, 6.28)];
+
+    // itens: estrelas (pontos) e cápsulas F (combustível / energia)
+    const n = W > 1800 ? 2 : 1;
+    const put = type => {
+      let x = rand(120, W - 120), tries = 0;
+      while (tries++ < 20 && zones.some(z => x > z.x0 - 30 && x < z.x1 + 30)) x = rand(120, W - 120);
+      const y = mode === 'rover' ? terrainY(x) - (type === 'gem' ? rand(42, 64) : 16) : Math.max(110, terrainY(x) - rand(140, 300));
+      items.push({ type, x, y, got: false, p: rand(0, 6.28) });
+    };
+    for (let i = 0; i < (mode === 'rover' ? (second ? 9 : 7) : n); i++) put('gem');
+    if (mode === 'rover' || (mode === 'lander' && !(astro.id === 'lua' && mapIdx === 0))) for (let i = 0; i < n; i++) put('fuel');
+  }
+  // como limitSlope, mas preserva as fendas
+  function limitSlopeOutside(h, m) {
+    const inPit = i => zones.some(z => z.type === 'pit' && i * seg >= z.x0 - seg && i * seg <= z.x1 + seg);
+    for (let i = 0; i < h.length - 1; i++) if (!inPit(i) && !inPit(i + 1)) h[i + 1] = Math.min(h[i + 1], h[i] + m);
+    for (let i = h.length - 2; i >= 0; i--) if (!inPit(i) && !inPit(i + 1)) h[i] = Math.min(h[i], h[i + 1] + m);
+  }
+  function terrainY(x) {
+    x = clamp(x, 0, W - 0.001);
+    const i = Math.floor(x / seg), t = x / seg - i;
+    return H - (heights[i] * (1 - t) + heights[i + 1] * t);
+  }
+  const zoneAt = (x, type) => zones.find(z => z.type === type && x > z.x0 && x < z.x1);
+  const liquidAt = x => zoneAt(x, 'lake') || zoneAt(x, 'lava');
+
+  // ---------- Veículo ----------
+  function spawnShip() {
+    const base = { a: 0, av: 0, vx: 0, vy: 0, fuel: fuelMax(), shield: mode === 'lander' ? up().shield : 0, thrusting: false, alive: true, grounded: false, drill: false, rpm: 0, rot: 0 };
+    if (mode === 'lander') {
+      const side = Math.random() < 0.5 ? -1 : 1;
+      ship = Object.assign(base, { x: W / 2 - side * W * rand(0.2, 0.36), y: 70, vx: side * rand(14, 22 + mapIdx * 6) });
+    } else if (mode === 'heli') {
+      const p = pads[0];
+      ship = Object.assign(base, { x: (p.x0 + p.x1) / 2, y: p.y - FOOT_Y, grounded: true });
+    } else {
+      ship = Object.assign(base, { x: seg * 3, y: terrainY(seg * 3), grounded: true });
+    }
+    frags = []; sparks = []; meteors = []; floats = [];
+    for (const it of items) if (it.type === 'fuel') it.got = false;   // cápsulas voltam a cada tentativa
+    meteorT = 3.5; alarmT = 0; stuckT = 0;
+    boulders = []; boulderT = 2.5; airT = 0; jumpBuf = 0;
+    stormX = mode === 'rover' && roverHaz().storm ? -300 : null;
+    cam.z = 1; aimCamera();
+  }
+  function shipPoint(lx, ly) {
+    const c = Math.cos(ship.a), s = Math.sin(ship.a);
+    return { x: ship.x + lx * c - ly * s, y: ship.y + lx * s + ly * c };
+  }
+  const bodyY = () => mode === 'rover' ? ship.y - 12 : ship.y;       // centro do veículo, para colisões e coletas
+
+  function updateHazards(dt) {
+    // meteoros que caem do céu
+    const slow = easy ? 1.4 : 1;
+    const every = astro.meteor[mapIdx] * slow;
+    const erupt = (astro.erupt ? astro.erupt[mapIdx] : 0) * slow;
+    if (every || erupt) {
+      meteorT -= dt;
+      if (meteorT <= 0) {
+        meteorT = (every || erupt) * rand(0.7, 1.3);
+        if (every) {
+          const dir = Math.random() < 0.5 ? -1 : 1, sp = rand(90, 140);
+          meteors.push({ x: ship.x + rand(-520, 520) - dir * 220, y: -40, vx: dir * sp * 0.55, vy: sp, r: rand(4, 7), a: rand(0, 6.28) });
+        } else if (vents.length) {                     // erupção: rochas sobem da caldeira e caem
+          const v = vents[randint(0, vents.length - 1)], vx = v.i * seg, vy = terrainY(vx);
+          for (let k = 0; k < randint(1, 2); k++) meteors.push({ x: vx, y: vy - 8, vx: rand(-55, 55), vy: -rand(120, 172), r: rand(4, 6.5), a: rand(0, 6.28), grav: true });
+          for (let i = 0; i < 14; i++) sparks.push({ x: vx + rand(-6, 6), y: vy - 4, vx: rand(-40, 40), vy: -rand(60, 190), life: rand(0.4, 1), t: 0 });
+          if (Math.abs(vx - ship.x) < viewW) boom(0.25);
+        }
+      }
+    }
+    for (const m of meteors) {
+      if (m.grav) m.vy += gravity() * dt;
+      m.x += m.vx * dt; m.y += m.vy * dt; m.a += dt * 3;
+      if (m.x > 0 && m.x < W && m.vy > 0 && m.y >= terrainY(m.x)) {
+        m.dead = true; burst(m.x, m.y - 2, astro.pal.line);
+      } else if (state === 'play' && Math.hypot(m.x - ship.x, m.y - ship.y) < m.r + 11) {
+        m.dead = true;
+        if (ship.shield) {
+          ship.shield = 0; burst(m.x, m.y, COL.ok); boom(0.4); beep(300, 0.2);
+          ship.vx += m.vx * 0.15; ship.vy += m.vy * 0.1;
+          showBanner('', 'O escudo absorveu o impacto.', 2);
+        } else crash([[m.grav ? 'atingido por uma rocha vulcânica' : 'atingido por um meteoro', m.grav ? 'As rochas saem das caldeiras dos vulcões: evite voar por cima delas. A melhoria Escudo absorve um impacto por tentativa.' : 'Meteoros deixam um rastro laranja e aparecem no radar. A melhoria Escudo absorve um impacto por tentativa.']]);
+      }
+    }
+    meteors = meteors.filter(m => !m.dead && m.y < H + 60);
+
+    // gêiseres: jorram por 2 s a cada 6,5 s e empurram a nave para cima
+    for (const v of vents) {
+      if (v.type !== 'geyser') continue;
+      const vx = v.i * seg, vy = terrainY(vx), tt = (time + v.ph) % 6.5;
+      if (tt < 2) {
+        for (let k = 0; k < 3; k++) sparks.push({ x: vx + rand(-5, 5), y: vy - 2, vx: rand(-22, 22), vy: -rand(170, 330), life: rand(0.5, 0.95), t: 0, c: astro.pal.line });
+        const dy = vy - ship.y;
+        if (state === 'play' && Math.abs(ship.x - vx) < 30 && dy > 0 && dy < 290) {
+          const f = 1 - dy / 290;
+          ship.vy -= 100 * f * dt; ship.vx += rand(-40, 40) * f * dt;
+        }
+      } else if (tt > 5.6 && Math.random() < 0.5) {    // aviso: borbulha antes de jorrar
+        sparks.push({ x: vx + rand(-4, 4), y: vy - 2, vx: rand(-10, 10), vy: -rand(20, 50), life: 0.4, t: 0, c: astro.pal.line });
+      }
+    }
+  }
+  function burst(x, y, c) {
+    for (let i = 0; i < 9; i++) sparks.push({ x, y, vx: rand(-80, 80), vy: -rand(10, 80), life: rand(0.3, 0.7), t: 0, c });
+  }
+  function addScore(pts, x, y, label) {
+    pts = Math.round(pts * scoreMult());
+    score += pts;
+    floats.push({ x, y, text: '+' + pts + (label ? ' ' + label : ' pontos'), c: COL.bone, t: 0 });
+  }
+  function collectItems() {
+    const by = bodyY();
+    for (const it of items) {
+      if (it.got || Math.hypot(it.x - ship.x, it.y - by) > 26) continue;
+      it.got = true;
+      if (it.type === 'fuel') {
+        ship.fuel = Math.min(fuelMax(), ship.fuel + 30);
+        floats.push({ x: it.x, y: it.y, text: mode === 'rover' ? '+30 energia' : '+30 combustível', c: COL.amber, t: 0 });
+        beep(520, 0.1); beep(780, 0.12, 0.1);
+      } else if (it.type === 'ring') {
+        addScore(50, it.x, it.y, 'aro'); beep(880, 0.06); beep(1320, 0.1, 0.06);
+        for (let i = 0; i < 12; i++) { const an = i * 0.5236; sparks.push({ x: it.x + Math.cos(an) * 20, y: it.y + Math.sin(an) * 20, vx: Math.cos(an) * 60, vy: Math.sin(an) * 60, life: 0.4, t: 0 }); }
+      } else { addScore(mode === 'rover' ? 50 : 150, it.x, it.y); beep(1040, 0.08); beep(1560, 0.14, 0.08); }
+    }
+  }
+
+  // ---------- Câmera ----------
+  // Sem zoom: enquadra o mapa (rolando de lado em mapas largos).
+  // Perto do chão: aproxima aos poucos e centraliza no veículo, inclusive junto às bordas do mapa.
+  function aimCamera() {
+    const half = viewW / 2;
+    const bx = W <= viewW ? W / 2 : clamp(ship.x, half, W - half);
+    const t = clamp(cam.z - 1, 0, 1);
+    const fy = Math.min(ship.y + (mode === 'rover' ? -40 : 25), H - H / (2 * cam.z) + 50);
+    cam.x = bx + (ship.x - bx) * t + (mode === 'rover' ? 90 * t : 0);   // o rover olha um pouco à frente
+    cam.y = H / 2 + (fy - H / 2) * t;
+  }
+  function updateCamera(dt) {
+    let zt = 1;
+    if (autoZoom && state !== 'title') {
+      if (mode === 'rover') zt = 1.4;
+      else zt = clamp(1 + (270 - (terrainY(ship.x) - (ship.y + FOOT_Y))) / 180, 1, 2);   // 270 px de altura: sem zoom; 90 px: zoom total
+    }
+    cam.z += (zt - cam.z) * Math.min(1, dt * (REDUCED ? 30 : 2.6));
+    aimCamera();
+    // com o painel aberto depois de um pouso ou queda, desloca a vista para o veículo não ficar atrás dele
+    const open = !panel.hidden && (state === 'landed' || state === 'crashed' || state === 'over') && !coarse;
+    const want = open ? Math.max(0, (panel.offsetWidth + 40 - cw * 0.18) / 2) : 0;
+    panShift += (want - panShift) * Math.min(1, dt * 3);
+    cam.x -= panShift * clamp(cam.z - 1, 0, 1) / (scale * cam.z);
+  }
+
+  // ---------- Simulação ----------
+  function update(dt) {
+    time += dt; stateTime += dt;
+    if (state === 'map') return;
+    if (state === 'play') {
+      if (mode === 'rover') updateRover(dt); else updateFlyer(dt);
+    } else setEngine(0);
+    windPos += windNow() * dt * 9;
+    for (const s of sparks) { s.t += dt; s.x += s.vx * dt; s.y += s.vy * dt; }
+    sparks = sparks.filter(s => s.t < s.life);
+    for (const f of floats) { f.t += dt; f.y -= 22 * dt; }
+    floats = floats.filter(f => f.t < 1.5);
+    for (const f of frags) {
+      f.t += dt; f.vy += gravity() * dt; f.x += f.vx * dt; f.y += f.vy * dt; f.a += f.va * dt;
+      const gy = terrainY(f.x);
+      if (f.y > gy) { f.y = gy; f.vy *= -0.3; f.vx *= 0.6; f.va *= 0.5; }
+    }
+    updateCamera(dt);
+    shake = Math.max(0, shake - dt * 2);
+  }
+
+  // módulo de pouso e helicóptero
+  function updateFlyer(dt) {
+    const heli = mode === 'heli';
+    const turn = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+    ship.thrusting = keys.thrust && ship.fuel > 0;
+    if (turn) usedTurn += dt;
+    if (ship.thrusting) usedThrust += dt;
+
+    if (heli) {                                        // os rotores aceleram e desaceleram aos poucos
+      const want = ship.thrusting ? 1 : ship.grounded ? 0 : 0.3;
+      ship.rpm += (want - ship.rpm) * Math.min(1, dt * (ship.thrusting ? 7 : 2.5));
+      ship.rot += ship.rpm * 30 * dt;
+      setEngine(Math.round(ship.rpm * 8) / 8 * 0.32, 240 + 560 * ship.rpm);
+    }
+    if (heli && ship.grounded) {                       // pousado: recarrega no painel solar até decolar
+      if (ship.thrusting && ship.rpm > 0.55) { ship.grounded = false; ship.vy = -10; }
+      else { if (!ship.thrusting) ship.fuel = Math.min(fuelMax(), ship.fuel + 7 * dt); updatePhotos(dt); return; }
+    }
+    const pw = heli ? (ship.thrusting ? ship.rpm : 0) : 1;
+
+    if (heli) {
+      ship.a += turn * 2.2 * dt;
+      if (!turn && !hard) ship.a -= Math.sign(ship.a) * Math.min(Math.abs(ship.a), 1.7 * dt);   // nivela sozinho
+      ship.a = clamp(ship.a, -0.6, 0.6);
+    } else {
+      if (hard) { ship.av += turn * 7 * dt; ship.av *= Math.exp(-0.7 * dt); ship.a += ship.av * dt; }   // giro com inércia
+      else ship.a += turn * ROT * dt;
+      if (Math.abs(ship.a) > Math.PI / 2) { ship.a = clamp(ship.a, -Math.PI / 2, Math.PI / 2); ship.av = 0; }
+    }
+
+    let ax = windNow(), ay = gravity();
+    if (ship.thrusting) {
+      ax += Math.sin(ship.a) * thrust() * pw;
+      ay -= Math.cos(ship.a) * thrust() * pw;
+      ship.fuel = Math.max(0, ship.fuel - burnRate() * pw * dt);
+      if (!heli && Math.random() < 0.6) {
+        const n = shipPoint(0, 12);
+        sparks.push({ x: n.x, y: n.y, vx: -Math.sin(ship.a) * 70 + rand(-14, 14) + ship.vx, vy: Math.cos(ship.a) * 70 + rand(-14, 14) + ship.vy, life: rand(0.25, 0.5), t: 0 });
+      }
+    }
+    ship.vx += ax * dt; ship.vy += ay * dt;
+    const drag = heli ? 0.35 : astro.drag;
+    if (drag) { const k = Math.exp(-drag * dt); ship.vx *= k; ship.vy *= k; }
+    ship.x += ship.vx * dt; ship.y += ship.vy * dt;
+    if (ship.x < 14) { ship.x = 14; ship.vx = Math.max(ship.vx, 0); }
+    if (ship.x > W - 14) { ship.x = W - 14; ship.vx = Math.min(ship.vx, 0); }
+    if (ship.y < -260) { ship.y = -260; ship.vy = Math.max(ship.vy, 0); }
+    if (!heli) {
+      setEngine(ship.thrusting ? 0.5 : 0);
+      if (turn && Math.random() < 0.5) {               // jatinhos de manobra
+        const q = shipPoint(-turn * 9, -9);
+        sparks.push({ x: q.x, y: q.y, vx: ship.vx - turn * Math.cos(ship.a) * 60, vy: ship.vy - turn * Math.sin(ship.a) * 60, life: 0.18, t: 0, c: COL.bone });
+      }
+    }
+
+    collectItems();
+    if (heli) updatePhotos(dt);
+
+    // poeira levantada perto do chão
+    const altNow = terrainY(ship.x) - (ship.y + FOOT_Y);
+    if (ship.thrusting && altNow < 55 && Math.random() < 0.7) {
+      const gx = clamp(ship.x - Math.sin(ship.a) * (altNow + 14), 0, W), dir = Math.random() < 0.5 ? -1 : 1;
+      sparks.push({ x: gx, y: terrainY(gx) - 1, vx: dir * rand(40, 120), vy: -rand(4, 26), life: rand(0.4, 0.9), t: 0, c: COL.dim });
+    }
+    if (ship.fuel > 0 && ship.fuel < 20) { alarmT -= dt; if (alarmT <= 0) { beep(440, 0.07); alarmT = 0.9; } }
+    updateHazards(dt);
+    if (state === 'play') checkContact();
+  }
+
+  function updatePhotos(dt) {
+    for (const t of targets) {
+      if (t.done) continue;
+      const cy = terrainY(t.x) - 75;
+      if (Math.hypot(ship.x - t.x, ship.y - cy) < 64) {
+        t.prog += dt / 0.9;
+        if (t.prog >= 1) {
+          t.done = true; addScore(100, t.x, cy, 'foto'); beep(1300, 0.05); beep(900, 0.08, 0.07);
+          if (!targetsLeft()) showBanner('', 'Fotos completas: pouse em DESTINO.', 3.5);
+        }
+      } else t.prog = Math.max(0, t.prog - dt * 0.3);
+    }
+  }
+
+  function checkContact() {
+    const fx = footX(), heli = mode === 'heli';
+    const fl = shipPoint(-fx, FOOT_Y), fr = shipPoint(fx, FOOT_Y);
+    const pts = heli ? [fl, fr, shipPoint(0, -11), shipPoint(-15, -10), shipPoint(15, -10)] : [fl, fr, shipPoint(0, -12), shipPoint(-9, -2), shipPoint(9, -2)];
+    let hit = false;
+    for (const p of pts) if (p.y >= terrainY(p.x)) { hit = true; break; }
+    if (!hit) return;
+
+    const liq = liquidAt(ship.x);
+    if (liq) return crash([liq.type === 'lake'
+      ? ['afundou num lago de metano', 'Os lagos de Titã aparecem em azul-esverdeado. Pouse só nas plataformas laranja.']
+      : ['caiu num lago de lava', 'A lava aparece em laranja-vivo no chão, entre os vulcões. Pouse só nas plataformas.']]);
+    const pad = pads.find(p => fl.x >= p.x0 - 1 && fr.x <= p.x1 + 1);
+    const slope = Math.abs(terrainY(ship.x + fx) - terrainY(ship.x - fx)) / (2 * fx);
+    const problems = [];
+    if (!heli && !pad) problems.push(['fora da plataforma', 'Só as faixas laranja contam, e as duas sapatas precisam ficar em cima da plataforma.']);
+    if (heli && slope > 0.4) problems.push(['terreno inclinado demais', 'O helicóptero só pousa em chão quase plano. Procure um trecho reto ou uma plataforma.']);
+    if (ship.vy > vyMax()) problems.push(['descida rápida demais (' + fmt(ship.vy / M) + ' m/s)', heli ? 'Segure o rotor até o número da Descida ficar verde antes de tocar o chão.' : 'Comece a frear mais alto e segure o motor até o número da Descida ficar verde.']);
+    if (Math.abs(ship.vx) > vxMax()) problems.push(['deslizando de lado (' + fmt(Math.abs(ship.vx) / M) + ' m/s)', windMax() ? 'Com vento, incline um pouco contra ele até a velocidade Lateral zerar.' : 'Antes de descer, incline contra o movimento até a velocidade Lateral zerar.']);
+    if (Math.abs(ship.a) > ANG_MAX) problems.push(['inclinado demais (' + Math.round(Math.abs(ship.a) * 180 / Math.PI) + '°)', heli ? 'Solte as setas para o helicóptero se nivelar antes de tocar o chão.' : 'Deixe a nave em pé (inclinação perto de 0°) nos últimos metros.']);
+    if (problems.length) return crash(problems);
+
+    const touch = ship.vy, perfect = ship.vy <= 9 && Math.abs(ship.vx) <= 5 && Math.abs(ship.a) <= 3 * Math.PI / 180;
+    ship.a = 0; ship.av = 0; ship.vx = 0; ship.vy = 0; ship.thrusting = false;
+    touchdownDust();
+    if (!heli) { ship.y = pad.y - FOOT_Y; return landLander(pad, touch, perfect); }
+    ship.y = Math.min(terrainY(ship.x - fx), terrainY(ship.x + fx)) - FOOT_Y;
+    ship.grounded = true;
+    if (pad && pad.kind === 'dest' && !targetsLeft()) {
+      const rows = [['Velocidade no toque', fmt(touch / M) + ' m/s'], ['Fotos', targets.length + ' de ' + targets.length], ['Pouso no destino', '100'], ['Bateria restante', '+' + Math.round(ship.fuel * 2)]];
+      if (perfect) rows.push(['Toque suave', '+50']);
+      finishMap(perfect ? 'Pouso perfeito' : 'Voo concluído', rows, 100 + Math.round(ship.fuel * 2) + (perfect ? 50 : 0));
+    }
+  }
+
+  function landLander(pad, touch, perfect) {
+    const base = 100, fuelBonus = Math.round(ship.fuel * 2), soft = perfect ? 50 : 0;
+    const rows = [['Velocidade no toque', fmt(touch / M) + ' m/s'], ['Pouso', String(base)], ['Combustível restante', '+' + fuelBonus]];
+    if (perfect) rows.push(['Toque suave', '+' + soft]);
+    const used = !!pad.used;
+    rows.push(used ? ['Plataforma', 'já usada: sem pontos'] : ['Plataforma', '×' + pad.mult]);
+    pad.used = true;
+    const more = pads.some(p => !p.used);
+    finishMap(perfect ? 'Pouso perfeito' : 'Pouso confirmado', rows, used ? 0 : (base + fuelBonus + soft) * pad.mult,
+      more ? { label: 'Decolar para outra plataforma', fn: relaunch } : null,
+      more ? ' Você pode decolar de novo com +30 de combustível e pontuar em outra plataforma, mas uma queda custa uma nave.' : '');
+  }
+  function relaunch() {
+    state = 'play'; stateTime = 0; panel.hidden = true; choices = [];
+    $('go').blur(); $('alt').blur(); $('legend').hidden = false;
+    ship.fuel = Math.min(fuelMax(), ship.fuel + 30);
+    ship.y -= 3; ship.vy = -34;
+    showBanner('', 'Decolando: +30 de combustível. Acione o motor!', 2.5);
+  }
+  function touchdownDust() {
+    const gy = terrainY(ship.x);
+    for (let i = 0; i < 16; i++) { const d = i % 2 ? 1 : -1; sparks.push({ x: ship.x + d * rand(4, 14), y: gy - 1, vx: d * rand(30, 110), vy: -rand(4, 30), life: rand(0.4, 0.8), t: 0, c: COL.dim }); }
+  }
+
+  // rover: uma partícula que rola sobre o terreno; pula, voa nas rampas e precisa pousar inteiro
+  function updateRover(dt) {
+    const d = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+    const yl = terrainY(ship.x - 13), yr = terrainY(ship.x + 13);
+    const th = Math.atan2(yr - yl, 26), tx = Math.cos(th), ty = Math.sin(th), nx = ty, ny = -tx;   // tangente e normal do chão
+    const sand = ship.grounded && zoneAt(ship.x, 'sand');
+    const inStorm = stormX !== null && ship.x < stormX;
+    const was = ship.grounded;
+    if (d) usedTurn += dt;
+
+    // pulo: um toque, só com as rodas no chão
+    if (jumpBuf > 0 && ship.grounded && ship.fuel > 0) {
+      jumpBuf = 0;
+      ship.vy = Math.min(ship.vy, 0) - 98; ship.y -= 3; ship.grounded = false;
+      ship.fuel = Math.max(0, ship.fuel - 1.2); usedThrust += 1;
+      beep(330, 0.06); beep(520, 0.08, 0.05);
+      for (let i = 0; i < 8; i++) sparks.push({ x: ship.x + rand(-12, 12), y: ship.y, vx: rand(-60, 60), vy: -rand(5, 30), life: 0.4, t: 0, c: COL.dim });
+    }
+    jumpBuf -= dt;
+
+    ship.vy += gravity() * dt;
+    ship.thrusting = false; ship.drill = false;
+    if (ship.grounded) {
+      if (d && ship.fuel > 0) {
+        const a = thrust() * tx * (sand ? 0.6 : 1) * (inStorm ? 0.7 : 1) * (hard ? 0.85 : 1) * d;
+        ship.vx += a * tx * dt; ship.vy += a * ty * dt;
+        ship.fuel = Math.max(0, ship.fuel - burnRate() * (sand ? 1.3 : 1) * dt);
+        ship.thrusting = true;
+        if (Math.random() < (sand ? 0.8 : 0.3)) sparks.push({ x: ship.x - d * 14, y: ship.y - 2, vx: -d * rand(20, 70), vy: -rand(8, 40), life: rand(0.3, 0.6), t: 0, c: COL.dim });
+      }
+      const k = Math.exp(-((d ? 0.5 : 1.8) + (sand ? 0.9 : 0)) * dt);     // atrito; sem acelerar, o rover freia
+      ship.vx *= k; ship.vy *= k;
+    } else if (d) ship.vx += d * 45 * dt;              // um pouco de controle no ar
+    const sp = Math.hypot(ship.vx, ship.vy);
+    if (sp > 175 && ship.grounded) { ship.vx *= 175 / sp; ship.vy *= 175 / sp; }
+    ship.x += ship.vx * dt; ship.y += ship.vy * dt;
+    if (ship.x < 20) { ship.x = 20; ship.vx = Math.max(ship.vx, 0); }
+    if (ship.x > W - 20) { ship.x = W - 20; ship.vx = Math.min(ship.vx, 0); }
+
+    const gy = terrainY(ship.x);
+    if (ship.y >= gy - 0.5) {
+      if (zoneAt(ship.x, 'pit')) { ship.y = gy; return crash([['caiu numa fenda', coarse ? 'Toque em PULO na beirada da fenda, com o rover em movimento.' : 'Aperte ↑ na beirada da fenda, com o rover em movimento.']]); }
+      const vn = ship.vx * nx + ship.vy * ny;          // negativo = entrando no chão
+      if (vn < 0) {
+        const lim = impactMax() * (was ? 1.7 : 1);
+        if (-vn > lim) { ship.y = gy; return crash([[was ? 'bateu forte numa subida' : 'queda alta demais', 'Quedas de muito alto quebram a suspensão. A melhoria Suspensão reforçada aguenta mais.']]); }
+        if (!was && -vn > 60) { beep(140, 0.08); for (let i = 0; i < 6; i++) sparks.push({ x: ship.x + rand(-12, 12), y: gy - 1, vx: rand(-50, 50), vy: -rand(10, 40), life: 0.5, t: 0, c: COL.dim }); }
+        ship.vx -= vn * nx; ship.vy -= vn * ny;
+      }
+      ship.y = gy; ship.grounded = true;
+    } else ship.grounded = gy - ship.y < 3;
+    if (ship.grounded) {
+      if (airT > 0.9) { addScore(Math.round(airT * 40), ship.x, ship.y - 40, 'salto'); beep(990, 0.08); }   // tempo no ar vale pontos
+      airT = 0;
+      ship.a += (th - ship.a) * Math.min(1, dt * 12);
+    } else airT += dt;
+    setEngine(ship.thrusting ? 0.22 : 0);
+
+    collectItems();
+    // coleta: basta frear sobre o ponto, a broca desce sozinha
+    const speed = Math.hypot(ship.vx, ship.vy);
+    for (const t of targets) {
+      if (t.done || Math.abs(t.x - ship.x) > 24 || !ship.grounded || speed > 32) continue;
+      ship.drill = true; t.prog += dt / 0.9;
+      if (Math.random() < 0.6) sparks.push({ x: t.x + rand(-3, 3), y: terrainY(t.x) - 1, vx: rand(-40, 40), vy: -rand(20, 70), life: 0.4, t: 0, c: astro.pal.line });
+      if (t.prog >= 1) {
+        t.done = true; addScore(150, t.x, terrainY(t.x) - 30, 'amostra'); beep(700, 0.08); beep(1050, 0.12, 0.09);
+        if (!targetsLeft()) showBanner('', 'Amostras completas: corra para o DEPÓSITO, no fim do mapa.', 3.5);
+      }
+    }
+    if (ship.fuel > 0 && ship.fuel < 20) { alarmT -= dt; if (alarmT <= 0) { beep(440, 0.07); alarmT = 0.9; } }
+
+    // tempestade de areia: avança sem parar e suga a energia de quem fica dentro dela
+    if (stormX !== null) {
+      stormX += roverHaz().storm[mapIdx] * (easy ? 0.8 : 1) * dt;
+      if (inStorm) {
+        ship.fuel = Math.max(0, ship.fuel - 14 * dt);
+        if (ship.fuel <= 0) return crash([['engolido pela tempestade de areia', 'A tempestade vem da esquerda e aparece no radar: não pare por muito tempo nem volte atrás.']]);
+      }
+    }
+    updateBoulders(dt);
+    if (state !== 'play') return;
+
+    if (ship.x >= depot.x0 && !targetsLeft() && ship.grounded) {
+      return finishMap('Amostras entregues', [['Amostras', targets.length + ' de ' + targets.length], ['Chegada ao depósito', '100'], ['Energia restante', '+' + Math.round(ship.fuel * 2)]], 100 + Math.round(ship.fuel * 2));
+    }
+    if (ship.fuel <= 0 && speed < 4 && ship.grounded) {
+      stuckT += dt;
+      if (stuckT > 2) crash([['energia esgotada', 'Evite a areia fofa e pegue as cápsulas F no chão: cada uma devolve 30 de energia.']]);
+    } else stuckT = 0;
+  }
+
+  // pedras que rolam contra o rover: é preciso pular por cima
+  function updateBoulders(dt) {
+    const every = roverHaz().boulder ? roverHaz().boulder[mapIdx] * (easy ? 1.4 : 1) : 0;
+    if (every && ship.x < depot.x0 - 330) {
+      boulderT -= dt;
+      if (boulderT <= 0) {
+        boulderT = every * rand(0.7, 1.3);
+        const x = Math.min(W - 160, cam.x + viewW / (2 * cam.z) + 50);
+        if (x > ship.x + 260 && !zoneAt(x, 'pit')) boulders.push({ x, r: rand(9, 12), v: rand(75, 110), a: 0 });
+      }
+    }
+    for (const b of boulders) {
+      b.x -= b.v * dt; b.a -= b.v * dt / b.r;
+      const by = terrainY(b.x) - b.r;
+      if (zoneAt(b.x, 'pit') || b.x < 40) { b.dead = true; burst(b.x, by, astro.pal.line); continue; }
+      if (state === 'play' && Math.hypot(b.x - ship.x, by - (ship.y - 12)) < b.r + 12) {
+        b.dead = true;
+        crash([['atingido por uma pedra rolando', coarse ? 'Toque em PULO quando a pedra chegar perto: o rover passa por cima dela.' : 'Aperte ↑ quando a pedra chegar perto: o rover passa por cima dela.']]);
+      }
+    }
+    boulders = boulders.filter(b => !b.dead);
+  }
+
+  // ---------- Fim de mapa, de fase e perdas ----------
+  function finishMap(title, rows, gainedRaw, altOpt = null, extra = '') {
+    const gained = Math.round(gainedRaw * scoreMult());
+    score += gained;
+    if (!tut[mode]) { tut[mode] = true; store.set('tut', tut); }
+    ship.thrusting = false;
+    state = 'landed'; stateTime = 0;
+    beep(660, 0.12); beep(880, 0.12, 0.13); beep(1320, 0.25, 0.26);
+    if (diff !== 1) rows.push(['Dificuldade ' + DIFFS[diff].name.toLowerCase(), hard ? '×1,5' : '×0,75']);
+    rows.push(['Total do mapa', '+' + num(gained)], ['Pontos na fase', num(score)]);
+
+    const last = mapIdx === MAPS - 1;
+    const first = !S().done[mapKey()];
+    const pool = first ? UPG.filter(u => up()[u.key] < u.max && (!u.only || u.only === mode)).sort(() => Math.random() - 0.5).slice(0, 3) : [];
+    let text = 'Mapa ' + (mapIdx + 1) + ' de ' + MAPS + ' de ' + astro.name + ' concluído.';
+    if (!first) text += ' A melhoria deste mapa já foi conquistada antes.';
+    text += extra;
+    const j = Math.min(mi(), 2);
+    showPanel('ok', title, text, rows,
+      pool.length ? null : { label: last ? 'Concluir fase' : 'Próximo mapa', fn: afterLanding },
+      { choices: pool.map(u => ({ name: upName(u), desc: u.descs[Math.min(j, u.descs.length - 1)] + ' (nível ' + up()[u.key] + ' → ' + (up()[u.key] + 1) + ' de ' + u.max + ')', fn: () => { up()[u.key]++; afterLanding(); } })),
+        hint: 'Primeira vez neste mapa: escolha uma melhoria permanente para ' + (last ? 'concluir a fase' : 'ir ao próximo mapa') + ' (clique ou tecla 1, 2, 3)',
+        alt: altOpt });
+  }
+  function afterLanding() {
+    S().done[mapKey()] = true; persist();
+    if (mapIdx < MAPS - 1) { mapIdx += 1; buildLevel(); spawnShip(); beginPlay(); }
+    else completePhase();
+  }
+  function completePhase() {
+    const s = S(), list = phases();
+    const prev = s.best[astro.id] || 0, record = score > prev;
+    if (record) s.best[astro.id] = score;
+    const opened = astroIdx + 2 > s.unlocked && astroIdx + 1 < list.length;
+    s.unlocked = clamp(Math.max(s.unlocked, astroIdx + 2), 1, list.length);
+    persist();
+    const nextIdx = Math.min(astroIdx + 1, list.length - 1);
+    openMap(opened ? nextIdx : astroIdx);
+    const allDone = list.every(a => s.best[a.id] !== undefined);
+    showBanner(astro.name + ': fase concluída',
+      num(score) + ' pontos' + (record && prev ? ' (novo recorde)' : '') + '. ' +
+      (opened ? list[nextIdx].name + ' liberada.' : allDone && astroIdx === list.length - 1 ? 'Campanha de ' + MODES[mode].name + ' completa.' : ''), 6);
+    beep(784, 0.14); beep(988, 0.14, 0.15); beep(1175, 0.14, 0.3); beep(1568, 0.4, 0.45);
+  }
+
+  function crash(problems) {
+    if (!ship.alive) return;
+    ship.alive = false; ship.thrusting = false;
+    lives -= 1;
+    shake = REDUCED ? 0 : 1;
+    boom();
+    const by = bodyY();
+    for (let i = 0; i < 14; i++) {
+      const ang = rand(0, 6.28), sp = rand(20, 110);
+      frags.push({ x: ship.x, y: by, vx: Math.cos(ang) * sp + ship.vx * 0.3, vy: Math.sin(ang) * sp - 40, a: rand(0, 6.28), va: rand(-8, 8), len: rand(4, 12), t: 0 });
+    }
+    const reason = problems.map(p => p[0]).join(', ') + '.';
+    const s = S();
+    if (lives <= 0) {
+      state = 'over'; stateTime = 0;
+      showPanel('bad', 'Sem unidades de reserva',
+        'Última unidade perdida: ' + reason + ' A fase ' + astro.name + ' recomeça do mapa 1, com as unidades de volta. As melhorias conquistadas continuam com você.',
+        [['Dica', problems[0][1]], ['Pontos na fase', num(score)], ['Melhor em ' + astro.name, s.best[astro.id] !== undefined ? num(s.best[astro.id]) : 'fase ainda não concluída']],
+        { label: 'Recomeçar fase', fn: () => startPhase(astroIdx) }, { alt: { label: 'Voltar ao mapa', fn: () => openMap(astroIdx) } });
+    } else {
+      state = 'crashed'; stateTime = 0;
+      const rows = [['Dica', problems[0][1]], ['Unidades restantes', String(lives)]];
+      if (mode !== 'rover') rows.push(['Limites de pouso', fmt(vyMax() / M) + ' m/s de descida, ' + fmt(vxMax() / M) + ' m/s de lado, ' + ANG_DEG + '°']);
+      showPanel('bad', MODES[mode].lost, 'Motivo: ' + reason, rows, { label: 'Tentar de novo', fn: () => { spawnShip(); beginPlay(false); } });
+    }
+  }
+
+  // ---------- Painel ----------
+  const panel = $('panel');
+  // btn: {label, fn} ou null; opts: {alt:{label, fn}, choices:[{name, desc, fn}], hint, low}
+  function showPanel(kind, title, text, rows, btn, opts = {}) {
+    panel.className = (kind || '') + (opts.low ? ' low' : '');
+    $('pTitle').textContent = title;
+    $('pText').textContent = text;
+    const dl = $('pList'); dl.textContent = '';
+    for (const [k, v] of rows) {
+      const dt = document.createElement('dt'), dd = document.createElement('dd');
+      dt.textContent = k;
+      if (v instanceof Node) dd.appendChild(v); else dd.textContent = v;
+      dl.append(dt, dd);
+    }
+    dl.hidden = rows.length === 0;
+    goFn = btn ? btn.fn : null;
+    $('go').hidden = !btn;
+    if (btn) $('goText').textContent = btn.label;
+    altFn = opts.alt ? opts.alt.fn : null;
+    $('alt').hidden = !opts.alt;
+    if (opts.alt) $('alt').textContent = opts.alt.label;
+    alt2Fn = opts.alt2 ? opts.alt2.fn : null;
+    $('alt2').hidden = !opts.alt2;
+    if (opts.alt2) $('alt2').textContent = opts.alt2.label;
+    choices = opts.choices || [];
+    const box = $('choices'); box.textContent = '';
+    box.hidden = !choices.length;
+    if (choices.length) {
+      const hint = document.createElement('div'); hint.className = 'hint'; hint.textContent = opts.hint || ''; box.append(hint);
+      choices.forEach((c, i) => {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'choice'; b.id = 'choice' + (i + 1);
+        const k = document.createElement('kbd'); k.textContent = String(i + 1); k.className = 'keys-only';
+        const n = document.createElement('b'); n.textContent = c.name;
+        const d = document.createElement('span'); d.textContent = c.desc;
+        b.append(k, n, d);
+        b.addEventListener('click', () => choose(i));
+        box.append(b);
+      });
+    }
+    panel.hidden = false;
+    panel.scrollTop = 0;
+    $('legend').hidden = true; setTip('');
+  }
+  function controlRows() {
+    if (mode === 'rover') return [['Dirigir', coarse ? '▶ acelera, ◀ dá ré' : '→ acelera, ← dá ré (ou D / A)'], ['Pular', coarse ? 'botão PULO' : '↑, W ou Espaço'], ['Coletar amostra', 'frear sobre o ponto de coleta']];
+    if (mode === 'heli') return [['Inclinar', coarse ? '◀ e ▶' : '← → ou A D'], ['Rotores', coarse ? 'botão ROTOR' : '↑, W ou Espaço']];
+    return [['Girar', coarse ? '◀ e ▶' : '← → ou A D'], ['Motor', coarse ? 'botão MOTOR' : '↑, W ou Espaço']];
+  }
+  function setupHud() {
+    const L = (id, t) => { $(id).querySelector('.lbl').textContent = t; };
+    const rover = mode === 'rover';
+    $('iAlt').hidden = rover; $('iVy').hidden = rover; $('vxMax').hidden = rover; $('angMax').hidden = rover;
+    L('iVx', rover ? 'Velocidade' : 'Lateral');
+    L('iFuel', mode === 'lander' ? 'Combustível' : mode === 'heli' ? 'Bateria' : 'Energia');
+    $('iObj').hidden = mode === 'lander'; L('iObj', mode === 'heli' ? 'Fotos' : 'Amostras');
+    L('iLives', MODES[mode].unit);
+    $('iWind').hidden = !windMax();
+    $('tF').textContent = mode === 'lander' ? 'MOTOR' : mode === 'heli' ? 'ROTOR' : 'PULO';
+    $('legend').textContent = (rover ? '→ acelerar · ← ré · ↑ pular' : mode === 'heli' ? '← → inclinar · ↑ rotores' : '← → girar · ↑ motor') + ' · P pausa · Z zoom · M som';
+  }
+  function showTitle() {
+    state = 'title'; stateTime = 0;
+    $('hud').hidden = false; $('touch').hidden = false;
+    setupHud();
+    const progress = m => { const s = save.modes[m], n = MODES[m].phases.length, d = MODES[m].phases.filter(a => s.best[a.id] !== undefined).length; return d + ' de ' + n + ' fases concluídas'; };
+    showPanel('', 'Lander Lunar',
+      'Três jeitos de explorar o Sistema Solar. Cada fase tem dois mapas; concluir a fase libera a próxima. Dificuldade atual: ' + DIFFS[diff].name.toLowerCase() + '.',
+      [], null,
+      { choices: Object.keys(MODES).map(m => ({ name: MODES[m].name, desc: MODES[m].about + ' ' + progress(m) + '.', fn: () => { mode = m; openMap(Math.min(save.modes[m].unlocked, MODES[m].phases.length) - 1); } })),
+        hint: 'Escolha o modo de jogo (clique ou tecla 1, 2, 3)',
+        alt: { label: 'Configurações', fn: showSettings } });
+  }
+  function showSettings() {
+    stateTime = 0.3;
+    showPanel('', 'Configurações', 'A dificuldade vale para os três modos e pode ser trocada quando quiser, aqui na tela inicial. O progresso e as melhorias não mudam.',
+      [['Zoom automático', (autoZoom ? 'ligado' : 'desligado') + (coarse ? '' : ' (tecla Z durante o jogo)')], ['Som', (muted ? 'desligado' : 'ligado') + (coarse ? '' : ' (tecla M)')]]
+        .concat(TAURI ? [['Tela cheia', 'tecla F11'], ['Versão do jogo', appVersion || '…']] : []),
+      { label: 'Voltar', fn: showTitle },
+      { choices: DIFFS.map((d, i) => ({ name: d.name + (i === diff ? ' ✓ (atual)' : ''), desc: d.desc, fn: () => { diff = i; hard = i === 2; easy = i === 0; store.set('dif', diff); lives = maxLives(); showSettings(); } })),
+        hint: 'Dificuldade (clique ou tecla 1, 2, 3)',
+        alt: { label: 'Zoom automático: ' + (autoZoom ? 'desligar' : 'ligar'), fn: () => { autoZoom = !autoZoom; store.set('zoom', autoZoom); showSettings(); } },
+        alt2: TAURI ? { label: 'Verificar atualização', fn: checkUpdates } : null });
+  }
+
+  // ---------- Atualização (só no app instalado: busca a versão mais nova nas Releases do GitHub) ----------
+  const TAURI = window.__TAURI__ || null;
+  let appVersion = '', updTok = 0, pendingUpdate = null;
+  if (TAURI && TAURI.app) TAURI.app.getVersion().then(v => { appVersion = v; }).catch(() => {});
+  const leaveUpdates = () => { updTok++; showSettings(); };
+  async function checkUpdates() {
+    const tk = ++updTok;
+    stateTime = 1;
+    showPanel('', 'Atualização', 'Procurando uma versão nova…', [['Versão instalada', appVersion || '…']], null, { alt: { label: 'Voltar', fn: leaveUpdates } });
+    let upd;
+    try {
+      upd = await TAURI.updater.check();
+    } catch (err) {
+      if (tk !== updTok) return;
+      return showPanel('bad', 'Não foi possível verificar', 'Confira a conexão com a internet e tente de novo.',
+        [['Versão instalada', appVersion || '…'], ['Detalhe', String(err && err.message || err).slice(0, 160)]],
+        { label: 'Tentar de novo', fn: checkUpdates }, { alt: { label: 'Voltar', fn: leaveUpdates } });
+    }
+    if (tk !== updTok) return;
+    if (!upd) {
+      return showPanel('ok', 'Jogo atualizado', 'Você já tem a versão mais recente.', [['Versão instalada', appVersion || '…']],
+        { label: 'Voltar', fn: leaveUpdates }, {});
+    }
+    pendingUpdate = upd;
+    const rows = [['Versão instalada', appVersion || upd.currentVersion || '…'], ['Versão nova', upd.version]];
+    if (upd.date) rows.push(['Publicada em', String(upd.date).slice(0, 10).split('-').reverse().join('/')]);
+    showPanel('ok', 'Nova versão disponível',
+      (upd.body && upd.body.trim() ? upd.body.trim().slice(0, 400) : 'Há uma versão nova do Lander Lunar.') + ' Seu progresso e suas configurações são mantidos.',
+      rows, { label: 'Baixar e instalar', fn: () => installUpdate(upd) }, { alt: { label: 'Agora não', fn: leaveUpdates } });
+  }
+  async function installUpdate(upd) {
+    updTok++;
+    stateTime = 1;
+    let total = 0, got = 0;
+    showPanel('', 'Baixando atualização', 'Versão ' + upd.version + '. Não feche o jogo; ele reinicia sozinho ao terminar.', [['Progresso', '0%']], null, {});
+    const bar = document.createElement('div'); bar.id = 'upbar'; bar.appendChild(document.createElement('div'));
+    $('pList').after(bar);
+    const setProg = () => {
+      const pct = total ? Math.min(100, Math.round(got / total * 100)) : 0;
+      const dd = $('pList').querySelector('dd'); if (dd) dd.textContent = total ? pct + '% de ' + fmt(total / 1048576) + ' MB' : fmt(got / 1048576) + ' MB';
+      bar.firstChild.style.width = (total ? pct : 50) + '%';
+    };
+    try {
+      await upd.downloadAndInstall(ev => {
+        if (ev.event === 'Started') total = (ev.data && ev.data.contentLength) || 0;
+        else if (ev.event === 'Progress') got += (ev.data && ev.data.chunkLength) || 0;
+        else if (ev.event === 'Finished') got = total;
+        setProg();
+      });
+      showPanel('ok', 'Atualização instalada', 'Reiniciando o jogo…', [], null, {});
+      await TAURI.process.relaunch();
+    } catch (err) {
+      bar.remove();
+      showPanel('bad', 'A atualização falhou', 'Nada foi alterado no jogo. Tente de novo; se continuar falhando, baixe o instalador na página de Releases do GitHub.',
+        [['Detalhe', String(err && err.message || err).slice(0, 160)]],
+        { label: 'Tentar de novo', fn: checkUpdates }, { alt: { label: 'Voltar', fn: leaveUpdates } });
+    }
+  }
+  // ao abrir o app, procura atualização em silêncio e só avisa se houver
+  function quietUpdateCheck() {
+    if (!TAURI || !TAURI.updater) return;
+    setTimeout(() => {
+      TAURI.updater.check().then(u => {
+        if (u && state === 'title') showBanner('Versão ' + u.version + ' disponível', 'Abra Configurações e clique em Verificar atualização.', 8);
+      }).catch(() => {});
+    }, 2500);
+  }
+
+  // ---------- Mapa de fases ----------
+  function openMap(i) {
+    state = 'map'; stateTime = 0; sel = clamp(i, 0, phases().length - 1);
+    $('hud').hidden = true; $('touch').hidden = true;
+    setEngine(0);
+    showMapPanel();
+  }
+  function showMapPanel() {
+    const list = phases(), a = list[sel], s = S(), open = sel < s.unlocked, best = s.best[a.id];
+    const rows = [['Local', a.sub], ['Gravidade', a.gReal + ' m/s²'], ['Perigos', a.hazards], ['Mapas', [0, 1].map(m => (m + 1) + (s.done[a.id + '-' + m] ? ' ✓' : '')).join('   ')],
+      ['Melhor pontuação', best !== undefined ? num(best) : 'fase ainda não concluída']];
+    if (open) rows.push(['Melhorias', upSummary()]);
+    showPanel(best !== undefined ? 'ok' : '', a.name,
+      open ? a.desc : 'Bloqueado. Conclua os dois mapas de ' + list[sel - 1].name + ' para liberar.',
+      rows, open ? { label: (best !== undefined ? 'Jogar de novo: ' : 'Iniciar: ') + a.name, fn: () => startPhase(sel) } : null,
+      { alt: { label: 'Trocar de modo', fn: backToTitle }, low: true });
+  }
+  function selectAstro(i) {
+    i = clamp(i, 0, phases().length - 1);
+    if (i === sel) return;
+    sel = i; beep(700, 0.04); showMapPanel();
+  }
+  function backToTitle() {
+    mode = 'lander'; astroIdx = 0; astro = ASTROS[0]; mapIdx = 0; lives = maxLives(); score = 0;
+    buildLevel(); spawnShip(); showTitle();
+  }
+  function startPhase(i) {
+    if (i >= S().unlocked) return;
+    astroIdx = i; astro = phases()[i]; mapIdx = 0;
+    lives = maxLives(); score = 0;
+    $('hud').hidden = false; $('touch').hidden = false;
+    buildLevel(); spawnShip(); setupHud(); beginPlay();
+  }
+
+  function beginPlay(intro = true) {
+    state = 'play'; stateTime = 0; panel.hidden = true;
+    $('go').blur(); $('alt').blur();
+    setupHud();
+    $('legend').hidden = false;
+    if (intro) levelIntro();
+  }
+  function advance() {
+    if (stateTime < 0.35 || !goFn || $('go').hidden) return;
+    initAudio();
+    goFn();
+  }
+  function choose(i) {
+    if (!choices[i] || stateTime < 0.45 || panel.hidden) return;
+    initAudio();
+    beep(990, 0.1);
+    const fn = choices[i].fn; choices = [];
+    fn();
+  }
+  $('go').addEventListener('click', advance);
+  $('alt').addEventListener('click', () => { if (altFn && stateTime >= 0.2) { initAudio(); altFn(); } });
+  $('alt2').addEventListener('click', () => { if (alt2Fn && stateTime >= 0.2) { initAudio(); alt2Fn(); } });
+
+  function togglePause() {
+    if (state === 'play') {
+      state = 'paused'; stateTime = 1;
+      showPanel('', 'Pausado', MODES[mode].name + ' em ' + astro.name + ', mapa ' + (mapIdx + 1) + ' de ' + MAPS + '.',
+        controlRows().concat([
+          ['Zoom automático', (autoZoom ? 'ligado' : 'desligado') + (coarse ? '' : ' (tecla Z)')], ['Som', (muted ? 'desligado' : 'ligado') + (coarse ? '' : ' (tecla M)')],
+          ['Melhorias', upSummary()]]),
+        { label: 'Continuar', fn: () => beginPlay(false) },
+        { alt: { label: 'Sair para o mapa', fn: () => openMap(astroIdx) } });
+    } else if (state === 'paused') advance();
+  }
+
+  // ---------- Entrada ----------
+  const keymap = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'thrust', KeyW: 'thrust', Space: 'thrust' };
+  addEventListener('keydown', e => {
+    if (state === 'map' && (e.code === 'ArrowLeft' || e.code === 'KeyA' || e.code === 'ArrowRight' || e.code === 'KeyD')) {
+      e.preventDefault(); initAudio();
+      selectAstro(sel + (e.code === 'ArrowLeft' || e.code === 'KeyA' ? -1 : 1));
+      return;
+    }
+    if (e.code in keymap) {
+      if (keymap[e.code] === 'thrust' && !e.repeat) jumpBuf = 0.18;   // o pulo vale mesmo num toque bem rápido
+      keys[keymap[e.code]] = true; e.preventDefault(); if (state === 'play') initAudio(); return;
+    }
+    if (e.code === 'Enter' || e.code === 'NumpadEnter') { if (state !== 'play') { e.preventDefault(); advance(); } }
+    else if (/^(Digit|Numpad)[123]$/.test(e.code)) choose(+e.code.slice(-1) - 1);
+    else if (e.code === 'KeyP' || e.code === 'Escape') togglePause();
+    else if (e.code === 'KeyM') { muted = !muted; lastGain = -1; showBanner('', 'Som: ' + (muted ? 'desligado' : 'ligado'), 1.6); }
+    else if (e.code === 'F11' && TAURI && TAURI.window) {
+      e.preventDefault();
+      const w = TAURI.window.getCurrentWindow();
+      w.isFullscreen().then(f => w.setFullscreen(!f)).catch(() => {});
+    }
+    else if (e.code === 'KeyZ') { autoZoom = !autoZoom; store.set('zoom', autoZoom); showBanner('', 'Zoom automático: ' + (autoZoom ? 'ligado' : 'desligado'), 1.6); }
+  });
+  addEventListener('keyup', e => { if (e.code in keymap) keys[keymap[e.code]] = false; });
+  addEventListener('blur', () => { keys.left = keys.right = keys.thrust = false; if (state === 'play') togglePause(); });
+  canvas.addEventListener('pointerdown', e => {
+    if (state !== 'map') return;
+    const r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    mapPos.forEach((p, i) => { if (Math.hypot(p.x - x, p.y - y) < p.r + 18) { initAudio(); selectAstro(i); } });
+  });
+
+  function bindPad(id, key) {
+    const el = $(id);
+    const set = v => e => { e.preventDefault(); keys[key] = v; if (v && key === 'thrust') jumpBuf = 0.18; el.classList.toggle('on', v); if (v) initAudio(); };
+    el.addEventListener('pointerdown', e => { try { el.setPointerCapture(e.pointerId); } catch (_) {} set(true)(e); });
+    el.addEventListener('pointerup', set(false));
+    el.addEventListener('pointercancel', set(false));
+    el.addEventListener('contextmenu', e => e.preventDefault());
+  }
+  bindPad('tL', 'left'); bindPad('tR', 'right'); bindPad('tF', 'thrust');
+
+  // ---------- Desenho ----------
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cw = canvas.clientWidth || 1; ch = canvas.clientHeight || 1;
+    canvas.width = Math.round(cw * dpr); canvas.height = Math.round(ch * dpr);
+    scale = ch / H;                       // a altura do mundo sempre ocupa a tela inteira
+    viewW = cw / scale;
+    hudH = $('hud').offsetHeight || hudH;
+  }
+  addEventListener('resize', () => { resize(); if (ship) aimCamera(); });
+
+  function drawTrajectory() {
+    // previsão: onde a nave cai se o motor ficar desligado (considera o vento e o ar do momento)
+    let x = ship.x, y = ship.y + FOOT_Y, vx = ship.vx, vy = ship.vy;
+    if (terrainY(x) - y < 30) return;
+    const g = gravity(), h = 0.1, wind = windNow(), k = astro.drag ? Math.exp(-astro.drag * h) : 1, fx = footX();
+    ctx.fillStyle = COL.bone;
+    for (let i = 1; i <= 60; i++) {
+      vx += wind * h; vy += g * h; vx *= k; vy *= k; x += vx * h; y += vy * h;
+      if (x < 14) { x = 14; vx = 0; } else if (x > W - 14) { x = W - 14; vx = 0; }
+      const gy = terrainY(x);
+      if (y >= gy) {
+        const onPad = pads.some(p => x - fx >= p.x0 && x + fx <= p.x1);
+        ctx.strokeStyle = onPad ? COL.ok : liquidAt(x) ? COL.bad : COL.dim; ctx.globalAlpha = 0.9; ctx.lineWidth = 1.3;
+        ctx.beginPath(); ctx.moveTo(x - 5, gy - 5); ctx.lineTo(x + 5, gy + 5); ctx.moveTo(x + 5, gy - 5); ctx.lineTo(x - 5, gy + 5); ctx.stroke();
+        break;
+      }
+      if (i % 3 === 0 && i > 3) { ctx.globalAlpha = Math.max(0.12, 0.5 - i * 0.007); ctx.fillRect(x - 1, y - 1, 2, 2); }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawMinimap() {
+    if (W <= viewW * 1.04 || state === 'title') return;
+    const mw = Math.min(340, cw - 40), mh = 30, mx = (cw - mw) / 2, my = hudH + 6;
+    const sx = mw / W, sy = mh / (H * 0.62);
+    const my2 = y => clamp(my + mh - (H - y) * sy, my - 2, my + mh);
+    ctx.fillStyle = 'rgba(23,26,39,.8)'; ctx.fillRect(mx - 6, my - 4, mw + 12, mh + 10);
+    ctx.beginPath();
+    for (let i = 0; i < heights.length; i++) { const x = mx + i * seg * sx, y = my + mh - heights[i] * sy; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    ctx.strokeStyle = COL.dim; ctx.lineWidth = 1; ctx.stroke();
+    for (const z of zones) {
+      ctx.fillStyle = z.type === 'lake' ? '#3f8f9b' : z.type === 'sand' ? COL.dim : COL.bad;
+      ctx.fillRect(mx + z.x0 * sx, my2(terrainY((z.x0 + z.x1) / 2)) - 1, Math.max(2, (z.x1 - z.x0) * sx), 2);
+    }
+    ctx.fillStyle = COL.amber;
+    for (const p of pads) ctx.fillRect(mx + p.x0 * sx, my2(p.y) - 1.5, Math.max(4, (p.x1 - p.x0) * sx), 3);
+    if (depot) ctx.fillRect(mx + depot.x0 * sx, my2(terrainY(depot.x)) - 1.5, 6, 3);
+    for (const t of targets) { ctx.fillStyle = t.done ? COL.ok : COL.amber; ctx.fillRect(mx + t.x * sx - 1.5, my2(terrainY(t.x)) - 7, 3, 5); }
+    for (const it of items) {
+      if (it.got) continue;
+      ctx.fillStyle = it.type === 'gem' ? COL.bone : COL.amber;
+      ctx.fillRect(mx + it.x * sx - 1, my2(it.y) - 1, 2, 2);
+    }
+    ctx.fillStyle = COL.bad;
+    for (const b of boulders) ctx.fillRect(mx + b.x * sx - 1.5, my2(terrainY(b.x)) - 4, 3, 3);
+    if (stormX !== null && stormX > 0) { ctx.globalAlpha = 0.35; ctx.fillRect(mx, my - 2, Math.min(mw, stormX * sx), mh + 6); ctx.globalAlpha = 1; }
+    ctx.fillStyle = COL.amber;
+    for (const m of meteors) ctx.fillRect(mx + clamp(m.x, 0, W) * sx - 1, my2(m.y) - 1, 2, 2);
+    const vw = viewW / cam.z, vx0 = clamp(cam.x - vw / 2, 0, W), vx1 = clamp(cam.x + vw / 2, 0, W);
+    ctx.strokeStyle = 'rgba(233,228,214,.35)';
+    ctx.strokeRect(mx + vx0 * sx, my - 2.5, (vx1 - vx0) * sx, mh + 7);
+    if (ship.alive) { ctx.fillStyle = COL.bone; ctx.fillRect(mx + ship.x * sx - 2, my2(ship.y) - 2, 4, 4); }
+  }
+
+  // o que se vê no céu de cada astro
+  function drawSky() {
+    ctx.lineWidth = 1.2; ctx.strokeStyle = COL.dim; ctx.fillStyle = 'rgba(139,143,163,.22)';
+    const x = W * 0.82, y = 125, id = astro.id;
+    if (id === 'lua') {                                // a Terra, meio iluminada
+      ctx.beginPath(); ctx.arc(x, y, 26, 0, 6.2832); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y, 26, -Math.PI / 2, Math.PI / 2);
+      ctx.ellipse(x, y, 9, 26, 0, Math.PI / 2, -Math.PI / 2, true); ctx.fill();
+    } else if (astro.pal === MARS) {                   // Fobos e Deimos
+      ctx.beginPath(); ctx.arc(x, y, 6, 0, 6.2832); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x - 150, y + 60, 3, 0, 6.2832); ctx.fill(); ctx.stroke();
+    } else if (id === 'europa' || id === 'io') {       // Júpiter e suas faixas
+      const r = 95;
+      ctx.beginPath(); ctx.arc(x, y + 20, r, 0, 6.2832); ctx.stroke();
+      ctx.beginPath();
+      for (const dy of [-60, -28, 8, 40, 68]) { const hw = Math.sqrt(r * r - dy * dy); ctx.moveTo(x - hw, y + 20 + dy); ctx.lineTo(x + hw, y + 20 + dy); }
+      ctx.globalAlpha = 0.5; ctx.stroke(); ctx.globalAlpha = 1;
+      ctx.beginPath(); ctx.ellipse(x + 30, y + 46, 16, 8, 0, 0, 6.2832); ctx.stroke();
+    } else if (id === 'tita') {                        // Saturno e os anéis
+      ctx.beginPath(); ctx.arc(x, y, 44, 0, 6.2832); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(x, y, 92, 15, -0.32, 0, 6.2832); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(x, y, 74, 11, -0.32, 0, 6.2832); ctx.globalAlpha = 0.5; ctx.stroke(); ctx.globalAlpha = 1;
+    } else {                                           // Mercúrio: o Sol enorme
+      const sx = W * 0.2, r = 78;
+      ctx.strokeStyle = COL.amber; ctx.globalAlpha = 0.55;
+      ctx.beginPath(); ctx.arc(sx, y, r, 0, 6.2832); ctx.stroke();
+      ctx.beginPath();
+      for (let i = 0; i < 24; i++) { const an = i * 0.2618 + time * 0.03, r2 = r + (i % 2 ? 16 : 26); ctx.moveTo(sx + Math.cos(an) * (r + 8), y + Math.sin(an) * (r + 8)); ctx.lineTo(sx + Math.cos(an) * r2, y + Math.sin(an) * r2); }
+      ctx.stroke(); ctx.globalAlpha = 1;
+    }
+  }
+
+  function drawZones(pal) {
+    for (const z of zones) {
+      const y = terrainY((z.x0 + z.x1) / 2), wd = z.x1 - z.x0;
+      if (z.type === 'lake' || z.type === 'lava') {
+        const lava = z.type === 'lava';
+        ctx.fillStyle = lava ? '#b8431c' : '#1f4f58';
+        ctx.fillRect(z.x0 - 2, y - 2, wd + 4, 13);
+        ctx.strokeStyle = lava ? '#ff8a3c' : '#5fb6c2'; ctx.lineWidth = 2;
+        ctx.globalAlpha = lava && !REDUCED ? 0.75 + 0.25 * Math.sin(time * 6 + z.x0) : 1;
+        ctx.beginPath();
+        for (let x = z.x0 - 2; x <= z.x1 + 2; x += 6) { const yy = y - 2 + (REDUCED ? 0 : Math.sin(x * 0.12 + time * (lava ? 1.5 : 3)) * 1.3); x === z.x0 - 2 ? ctx.moveTo(x, yy) : ctx.lineTo(x, yy); }
+        ctx.stroke(); ctx.globalAlpha = 1;
+      } else if (z.type === 'sand') {
+        ctx.fillStyle = pal.line; ctx.globalAlpha = 0.6;
+        for (let x = z.x0; x < z.x1; x += 6) { const yy = terrainY(x); ctx.fillRect(x, yy + 3 + (x * 7) % 5, 1.5, 1.5); ctx.fillRect(x + 3, yy + 9 + (x * 3) % 6, 1.5, 1.5); }
+        ctx.globalAlpha = 1;
+      } else {                                         // fenda: placa de aviso antes dela
+        const sx = z.x0 - 26, sy = terrainY(sx);
+        ctx.strokeStyle = COL.amber; ctx.lineWidth = 1.3; ctx.fillStyle = COL.amber;
+        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx, sy - 12); ctx.moveTo(sx - 7, sy - 12); ctx.lineTo(sx, sy - 25); ctx.lineTo(sx + 7, sy - 12); ctx.closePath(); ctx.stroke();
+        ctx.fillRect(sx - 0.7, sy - 21, 1.4, 5); ctx.fillRect(sx - 0.7, sy - 15, 1.4, 1.4);
+      }
+    }
+  }
+
+  function drawObjectives(pal) {
+    ctx.textAlign = 'center';
+    for (const t of targets) {
+      const gy = terrainY(t.x), c = t.done ? COL.ok : COL.amber;
+      ctx.strokeStyle = c; ctx.fillStyle = c; ctx.lineWidth = 1.4;
+      if (mode === 'heli') {                           // afloramento a fotografar e a zona onde pairar
+        ctx.beginPath(); ctx.moveTo(t.x - 9, gy); ctx.lineTo(t.x - 3, gy - 11); ctx.lineTo(t.x + 4, gy - 6); ctx.lineTo(t.x + 9, gy); ctx.stroke();
+        const cy = gy - 75;
+        ctx.globalAlpha = t.done ? 0.35 : 0.8; ctx.setLineDash([5, 6]);
+        ctx.beginPath(); ctx.arc(t.x, cy, 64, 0, 6.2832); ctx.stroke(); ctx.setLineDash([]);
+        if (!t.done && t.prog > 0) { ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(t.x, cy, 64, -Math.PI / 2, -Math.PI / 2 + t.prog * 6.2832); ctx.stroke(); }
+        ctx.font = '600 11px "IBM Plex Mono", monospace'; ctx.textBaseline = 'middle';
+        ctx.fillText(t.done ? 'FOTO ✓' : 'FOTO', t.x, cy);
+        ctx.globalAlpha = 1;
+      } else {                                         // ponto de coleta
+        ctx.beginPath(); ctx.moveTo(t.x - 8, gy - 26); ctx.lineTo(t.x + 8, gy - 26); ctx.lineTo(t.x, gy - 14); ctx.closePath();
+        t.done ? ctx.stroke() : ctx.fill();
+        ctx.beginPath(); ctx.moveTo(t.x - 18, gy + 4); ctx.lineTo(t.x + 18, gy + 4); ctx.stroke();
+        if (!t.done && t.prog > 0) { ctx.fillRect(t.x - 16, gy - 36, 32 * t.prog, 3); ctx.strokeRect(t.x - 16, gy - 36, 32, 3); }
+        if (t.done) { ctx.font = '600 11px "IBM Plex Mono", monospace'; ctx.textBaseline = 'middle'; ctx.fillText('✓', t.x, gy - 36); }
+      }
+    }
+    if (depot) {                                       // depósito: bandeira no fim do mapa
+      const gy = terrainY(depot.x), ready = !targetsLeft();
+      ctx.strokeStyle = COL.amber; ctx.fillStyle = COL.amber; ctx.lineWidth = 3.5;
+      ctx.beginPath(); ctx.moveTo(depot.x0, gy + 1); ctx.lineTo(W - seg, gy + 1); ctx.stroke();
+      ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(depot.x, gy); ctx.lineTo(depot.x, gy - 44); ctx.lineTo(depot.x + 20, gy - 37); ctx.lineTo(depot.x, gy - 30); ctx.stroke();
+      ctx.font = '600 12px "IBM Plex Mono", monospace'; ctx.textBaseline = 'top';
+      ctx.globalAlpha = ready ? 1 : 0.6;
+      ctx.fillText('DEPÓSITO', depot.x, gy + 10); ctx.globalAlpha = 1;
+    }
+  }
+
+  function drawVehicle(pal) {
+    ctx.save();
+    ctx.translate(ship.x, ship.y);
+    if (ship.shield) {
+      ctx.strokeStyle = COL.ok; ctx.globalAlpha = 0.55; ctx.lineWidth = 1; ctx.setLineDash([4, 5]);
+      ctx.beginPath(); ctx.arc(0, 1, 22, 0, 6.2832); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+    }
+    ctx.rotate(ship.a);
+    ctx.strokeStyle = COL.bone; ctx.lineWidth = 1.5; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.fillStyle = pal.sky;
+    if (mode === 'heli') {
+      ctx.beginPath(); ctx.rect(-6, -3, 12, 9); ctx.fill(); ctx.stroke();                  // corpo
+      ctx.beginPath();
+      ctx.moveTo(-5, 6); ctx.lineTo(-10, FOOT_Y); ctx.moveTo(5, 6); ctx.lineTo(10, FOOT_Y);  // pernas
+      ctx.moveTo(-13, FOOT_Y); ctx.lineTo(-7, FOOT_Y); ctx.moveTo(7, FOOT_Y); ctx.lineTo(13, FOOT_Y);
+      ctx.moveTo(0, -3); ctx.lineTo(0, -13);                                               // mastro
+      ctx.moveTo(-5, -15); ctx.lineTo(5, -15);                                             // painel solar
+      ctx.stroke();
+      // dois rotores girando em sentidos opostos; quanto mais rápido, mais borrados
+      const rpm = ship.rpm, R = 18;
+      const r1 = REDUCED ? R : 2 + (R - 2) * Math.abs(Math.cos(ship.rot)), r2 = REDUCED ? R * 0.8 : 2 + (R - 2) * Math.abs(Math.cos(ship.rot * 1.07 + 1.2));
+      if (rpm > 0.35) {
+        ctx.strokeStyle = COL.amber; ctx.globalAlpha = 0.28 * rpm; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.moveTo(-R, -10); ctx.lineTo(R, -10); ctx.moveTo(-R, -12.5); ctx.lineTo(R, -12.5); ctx.stroke();
+        ctx.globalAlpha = 1; ctx.lineWidth = 1.5;
+      }
+      ctx.strokeStyle = rpm > 0.5 ? COL.amber : COL.bone;
+      ctx.beginPath(); ctx.moveTo(-r1, -10); ctx.lineTo(r1, -10); ctx.moveTo(-r2, -12.5); ctx.lineTo(r2, -12.5); ctx.stroke();
+    } else if (mode === 'rover') {                     // origem no ponto de contato com o chão
+      ctx.beginPath(); ctx.rect(-15, -18, 30, 8); ctx.fill(); ctx.stroke();                // chassi
+      for (const wx of [-13, 0, 13]) { ctx.beginPath(); ctx.arc(wx, -5, 5, 0, 6.2832); ctx.fill(); ctx.stroke(); }
+      ctx.beginPath();
+      ctx.moveTo(8, -18); ctx.lineTo(8, -29); ctx.moveTo(4, -32); ctx.lineTo(13, -32); ctx.lineTo(13, -28); ctx.lineTo(4, -28); ctx.closePath();   // mastro e câmera
+      ctx.moveTo(-15, -15); ctx.lineTo(-21, -21);                                          // gerador
+      ctx.stroke();
+      if (ship.drill) { ctx.strokeStyle = COL.amber; ctx.beginPath(); ctx.moveTo(15, -14); ctx.lineTo(20, -8); ctx.lineTo(20 + rand(-1, 1), 2); ctx.stroke(); }
+    } else {
+      ctx.beginPath();   // cabine
+      ctx.moveTo(-4, -12); ctx.lineTo(4, -12); ctx.lineTo(9, -6); ctx.lineTo(9, 0); ctx.lineTo(4, 4); ctx.lineTo(-4, 4); ctx.lineTo(-9, 0); ctx.lineTo(-9, -6); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.rect(-8, 4, 16, 5); ctx.fill(); ctx.stroke();   // estágio de descida
+      ctx.beginPath();   // pernas, sapatas e bocal
+      ctx.moveTo(-8, 6); ctx.lineTo(-12, FOOT_Y); ctx.moveTo(8, 6); ctx.lineTo(12, FOOT_Y);
+      ctx.moveTo(-15, FOOT_Y); ctx.lineTo(-9, FOOT_Y); ctx.moveTo(9, FOOT_Y); ctx.lineTo(15, FOOT_Y);
+      ctx.moveTo(-2.5, 9); ctx.lineTo(-4, 12.5); ctx.lineTo(4, 12.5); ctx.lineTo(2.5, 9);
+      ctx.stroke();
+      if (ship.thrusting) {
+        const L = (16 + Math.random() * 12) * (1 + 0.08 * up().engine);
+        ctx.strokeStyle = COL.amber;
+        ctx.beginPath(); ctx.moveTo(-3.5, 13); ctx.lineTo(0, 13 + L); ctx.lineTo(3.5, 13); ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawWorld() {
+    const pal = astro.pal;
+    ctx.fillStyle = pal.sky;
+    ctx.fillRect(0, 0, cw, ch);
+
+    ctx.save();
+    const k = scale * cam.z;
+    const sx = shake ? rand(-1, 1) * shake * 6 : 0, sy = shake ? rand(-1, 1) * shake * 6 : 0;
+    ctx.translate(cw / 2 + sx, ch / 2 + sy);
+    ctx.scale(k, k);
+    ctx.translate(-cam.x, -cam.y);
+    const left = cam.x - cw / (2 * k) - 20, right = cam.x + cw / (2 * k) + 20;
+
+    // estrelas (bem mais fracas onde há atmosfera densa)
+    ctx.fillStyle = COL.bone;
+    const dimSky = astro.drag ? 0.35 : 1;
+    for (const s of stars) {
+      if (s.x < left || s.x > right || s.y > terrainY(s.x)) continue;
+      ctx.globalAlpha = (s.tw && !REDUCED ? 0.45 + 0.4 * Math.sin(time * 1.7 + s.p) : 0.7) * dimSky;
+      ctx.fillRect(s.x, s.y, s.r, s.r);
+    }
+    ctx.globalAlpha = 1;
+    drawSky();
+
+    // vento: riscos que correm na direção e na força do momento
+    if (windMax()) {
+      const wn = windNow(), span = right - left + 200, len = clamp(wn * 1.6, -34, 34);
+      ctx.strokeStyle = pal.line; ctx.lineWidth = 1; ctx.globalAlpha = 0.28;
+      ctx.beginPath();
+      for (const d of dust) {
+        const x = left - 100 + (((d.a * span + windPos * d.s) % span) + span) % span;
+        ctx.moveTo(x, d.y); ctx.lineTo(x - len * d.s, d.y);
+      }
+      ctx.stroke(); ctx.globalAlpha = 1;
+    }
+
+    // terreno (continua plano além dos limites do mapa)
+    const n = heights.length - 1, y0 = H - heights[0], yN = H - heights[n];
+    ctx.beginPath();
+    ctx.moveTo(-3000, H + 3000); ctx.lineTo(-3000, y0);
+    for (let i = 0; i <= n; i++) ctx.lineTo(i * seg, H - heights[i]);
+    ctx.lineTo(W + 3000, yN); ctx.lineTo(W + 3000, H + 3000); ctx.closePath();
+    ctx.fillStyle = pal.ground; ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-3000, y0);
+    for (let i = 0; i <= n; i++) ctx.lineTo(i * seg, H - heights[i]);
+    ctx.lineTo(W + 3000, yN);
+    ctx.strokeStyle = pal.line; ctx.lineWidth = 1.4; ctx.lineJoin = 'round'; ctx.stroke();
+    drawZones(pal);
+    if (stormX !== null) {                             // tempestade: parede de areia vindo da esquerda
+      ctx.fillStyle = pal.line; ctx.globalAlpha = 0.2;
+      ctx.fillRect(left - 400, -600, stormX - left + 400, H + 1200);
+      ctx.globalAlpha = 0.14; ctx.fillRect(stormX, -600, 26, H + 1200);
+      ctx.strokeStyle = pal.line; ctx.lineWidth = 1.2; ctx.globalAlpha = 0.55;
+      ctx.beginPath();
+      for (let i = 0; i < 46; i++) {
+        const x = stormX + 20 - ((i * 97 + (REDUCED ? 0 : time * 260)) % 620), y = 30 + (i * 53) % 640;
+        ctx.moveTo(x, y); ctx.lineTo(x - 30, y + 3);
+      }
+      ctx.stroke(); ctx.globalAlpha = 1;
+    }
+
+    // limites da área
+    ctx.strokeStyle = COL.dim; ctx.globalAlpha = 0.35; ctx.lineWidth = 1; ctx.setLineDash([2, 8]);
+    ctx.beginPath(); ctx.moveTo(0, -400); ctx.lineTo(0, y0); ctx.moveTo(W, -400); ctx.lineTo(W, yN); ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+
+    // plataformas
+    ctx.font = '600 13px "IBM Plex Mono", monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    for (const p of pads) {
+      const dimmed = (p.kind === 'dest' && targetsLeft()) || p.used;
+      ctx.globalAlpha = dimmed ? 0.5 : 1;
+      ctx.strokeStyle = COL.amber; ctx.lineWidth = 3.5;
+      ctx.beginPath(); ctx.moveTo(p.x0, p.y); ctx.lineTo(p.x1, p.y); ctx.stroke();
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(p.x0, p.y); ctx.lineTo(p.x0, p.y - 7); ctx.moveTo(p.x1, p.y); ctx.lineTo(p.x1, p.y - 7); ctx.stroke();
+      ctx.fillStyle = COL.amber;
+      ctx.fillText(p.used ? p.label + ' ✓' : p.label, (p.x0 + p.x1) / 2, p.y + 9);
+      if (p.kind !== 'base' && !p.used && (REDUCED || Math.sin(time * 5 + p.x0) > 0)) {
+        ctx.fillRect(p.x0 - 1.5, p.y - 11, 3, 3); ctx.fillRect(p.x1 - 1.5, p.y - 11, 3, 3);
+      }
+      ctx.globalAlpha = 1;
+    }
+    drawObjectives(pal);
+
+    // itens: estrela (pontos) e cápsula F (combustível / energia)
+    ctx.textAlign = 'center';
+    for (const it of items) {
+      if (it.got) continue;
+      const x = it.x, y = it.y + (REDUCED ? 0 : Math.sin(time * 2 + it.p) * (mode === 'rover' ? 2 : 4));
+      ctx.lineWidth = 1.4; ctx.fillStyle = pal.sky;
+      ctx.beginPath();
+      if (it.type === 'fuel') {
+        ctx.moveTo(x, y - 12); ctx.lineTo(x + 9, y); ctx.lineTo(x, y + 12); ctx.lineTo(x - 9, y); ctx.closePath();
+        ctx.strokeStyle = COL.amber; ctx.fill(); ctx.stroke();
+        ctx.fillStyle = COL.amber; ctx.font = '600 10px "IBM Plex Mono", monospace'; ctx.textBaseline = 'middle';
+        ctx.fillText('F', x, y + 0.5);
+      } else if (it.type === 'ring') {
+        ctx.strokeStyle = COL.amber; ctx.lineWidth = 2;
+        ctx.save(); ctx.translate(x, y); if (!REDUCED) ctx.rotate(time * 0.8 + it.p);
+        ctx.setLineDash([9, 5]); ctx.arc(0, 0, 20, 0, 6.2832); ctx.stroke(); ctx.restore();
+      } else {
+        for (let i = 0; i < 8; i++) {
+          const an = i * Math.PI / 4 - Math.PI / 2, rr = i % 2 ? 4 : 11;
+          const px = x + Math.cos(an) * rr, py = y + Math.sin(an) * rr;
+          i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+        }
+        ctx.closePath(); ctx.strokeStyle = COL.bone; ctx.fill(); ctx.stroke();
+      }
+    }
+    ctx.font = '600 12px "IBM Plex Mono", monospace'; ctx.textBaseline = 'middle';
+    for (const f of floats) { ctx.globalAlpha = clamp(1.5 - f.t, 0, 1); ctx.fillStyle = f.c; ctx.fillText(f.text, f.x, f.y - 16); }
+    ctx.globalAlpha = 1;
+
+    if (ship.alive && state === 'play' && !hard && mode === 'lander') drawTrajectory();
+
+    // meteoros e rochas vulcânicas
+    for (const m of meteors) {
+      ctx.strokeStyle = COL.amber; ctx.globalAlpha = 0.55; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(m.x, m.y); ctx.lineTo(m.x - m.vx * 0.22, m.y - m.vy * 0.22); ctx.stroke();
+      ctx.globalAlpha = 1; ctx.strokeStyle = m.grav ? COL.amber : COL.bone; ctx.fillStyle = pal.sky; ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const an = m.a + i * 1.0472, rr = m.r * (i % 2 ? 0.75 : 1.1);
+        const px = m.x + Math.cos(an) * rr, py = m.y + Math.sin(an) * rr;
+        i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+      }
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+
+    // chama, poeira e faíscas
+    for (const s of sparks) {
+      ctx.globalAlpha = 1 - s.t / s.life;
+      ctx.fillStyle = s.c || COL.amber; ctx.fillRect(s.x - 1, s.y - 1, 2, 2);
+    }
+    ctx.globalAlpha = 1;
+
+    for (const b of boulders) {                        // pedras rolando
+      const by = terrainY(b.x) - b.r;
+      ctx.strokeStyle = COL.bone; ctx.fillStyle = pal.ground; ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (let i = 0; i < 7; i++) { const an = b.a + i * 0.8976, rr = b.r * (i % 2 ? 0.82 : 1.08); const px = b.x + Math.cos(an) * rr, py = by + Math.sin(an) * rr; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+    if (ship.alive) drawVehicle(pal);
+
+    // destroços
+    ctx.strokeStyle = COL.bone; ctx.lineWidth = 1.5;
+    for (const f of frags) {
+      ctx.globalAlpha = clamp(1.6 - f.t / 2.5, 0.25, 1);
+      const dx = Math.cos(f.a) * f.len / 2, dy = Math.sin(f.a) * f.len / 2;
+      ctx.beginPath(); ctx.moveTo(f.x - dx, f.y - dy); ctx.lineTo(f.x + dx, f.y + dy); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
+    // em coordenadas de tela: seta quando o veículo sai pelo topo, situação do pouso e radar
+    if (ship.alive && mode !== 'rover') {
+      const px = (ship.x - cam.x) * k + cw / 2, py = (ship.y - cam.y) * k + ch / 2;
+      if (py < hudH - 10) {
+        const ty = hudH + 46;
+        ctx.fillStyle = COL.bone;
+        ctx.beginPath(); ctx.moveTo(px, ty); ctx.lineTo(px - 7, ty + 12); ctx.lineTo(px + 7, ty + 12); ctx.closePath(); ctx.fill();
+      }
+      if (state === 'play' && !ship.grounded && terrainY(ship.x) - (ship.y + FOOT_Y) < 230) {
+        const fx = footX();
+        const overPad = pads.some(p => ship.x - fx >= p.x0 && ship.x + fx <= p.x1);
+        const flatGround = Math.abs(terrainY(ship.x + fx) - terrainY(ship.x - fx)) / (2 * fx) <= 0.4;
+        let msg = mode === 'heli' ? 'PRONTO PARA POUSAR' : 'PRONTA PARA POUSAR', c = COL.ok;
+        if (ship.vy > vyMax()) { msg = 'DESCIDA RÁPIDA'; c = COL.amber; }
+        else if (Math.abs(ship.vx) > vxMax()) { msg = 'DESLIZANDO DE LADO'; c = COL.amber; }
+        else if (Math.abs(ship.a) > ANG_MAX) { msg = mode === 'heli' ? 'INCLINADO' : 'INCLINADA'; c = COL.amber; }
+        else if (liquidAt(ship.x)) { msg = liquidAt(ship.x).type === 'lava' ? 'LAVA ABAIXO' : 'LAGO ABAIXO'; c = COL.bad; }
+        else if (mode === 'heli' ? !flatGround : !overPad) { msg = mode === 'heli' ? 'TERRENO INCLINADO' : 'SEM PLATAFORMA ABAIXO'; c = COL.dim; }
+        const rightSide = px < cw - 230;
+        ctx.font = '600 11px "IBM Plex Mono", monospace'; ctx.textBaseline = 'middle';
+        ctx.textAlign = rightSide ? 'left' : 'right'; ctx.fillStyle = c;
+        ctx.fillText(msg, px + (rightSide ? 1 : -1) * 28 * k, py - 2);
+      }
+    }
+    drawMinimap();
+  }
+
+  // Mapa de fases: uma rota na ordem em que elas são liberadas
+  function drawMap() {
+    ctx.fillStyle = COL.void;
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.fillStyle = COL.bone;
+    for (const s of stars) {
+      const x = (((s.x + 700) / (W + 1400)) * cw), y = ((s.y + 350) / (H * 0.8 + 350)) * ch;
+      ctx.globalAlpha = s.tw && !REDUCED ? 0.4 + 0.35 * Math.sin(time * 1.7 + s.p) : 0.55;
+      ctx.fillRect(x, y, s.r, s.r);
+    }
+    ctx.globalAlpha = 1;
+
+    const list = phases(), sv = S(), small = cw < 640, n = list.length;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = COL.bone; ctx.font = '400 ' + (small ? 17 : 22) + 'px Michroma, "Trebuchet MS", sans-serif';
+    ctx.fillText(MODES[mode].chart, 20, small ? 38 : 46);
+    ctx.fillStyle = COL.dim; ctx.font = '400 12px "IBM Plex Mono", monospace';
+    const total = list.reduce((t, a) => t + (sv.best[a.id] || 0), 0);
+    const doneCount = list.filter(a => sv.best[a.id] !== undefined).length;
+    ctx.fillText(doneCount + ' de ' + n + ' fases concluídas · ' + num(total) + ' pontos no total', 20, small ? 58 : 68);
+    ctx.fillText(coarse ? 'Toque numa fase para escolher.' : '← → escolhem a fase, Enter inicia.', 20, small ? 76 : 87);
+
+    const span = n > 3 ? 0.8 : 0.5, spacing = cw * span / (n - 1), r = clamp(spacing * 0.3, 13, 38);
+    const baseY = clamp(ch * 0.34, 150, ch - 60);
+    mapPos = list.map((a, i) => ({ x: cw * (0.5 - span / 2) + spacing * i, y: baseY + Math.sin(i * 1.25 + 0.4) * Math.min(ch * 0.07, 46), r }));
+
+    ctx.lineWidth = 1; ctx.setLineDash([3, 7]);
+    for (let i = 0; i < n - 1; i++) {
+      ctx.strokeStyle = i + 1 < sv.unlocked ? COL.bone : COL.dim; ctx.globalAlpha = i + 1 < sv.unlocked ? 0.6 : 0.3;
+      const a = mapPos[i], b = mapPos[i + 1], d = Math.hypot(b.x - a.x, b.y - a.y), ux = (b.x - a.x) / d, uy = (b.y - a.y) / d;
+      ctx.beginPath(); ctx.moveTo(a.x + ux * (r + 8), a.y + uy * (r + 8)); ctx.lineTo(b.x - ux * (r + 8), b.y - uy * (r + 8)); ctx.stroke();
+    }
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+
+    list.forEach((a, i) => {
+      const p = mapPos[i], open = i < sv.unlocked, best = sv.best[a.id];
+      ctx.globalAlpha = open ? 1 : 0.38;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 6.2832);
+      ctx.fillStyle = a.pal.ground; ctx.fill();
+      ctx.strokeStyle = a.pal.line; ctx.lineWidth = 1.6; ctx.stroke();
+      // relevo típico, dentro do disco
+      ctx.save(); ctx.clip(); ctx.lineWidth = 1; ctx.globalAlpha *= 0.7;
+      ctx.beginPath();
+      const g = a.gen;
+      if (g === 'europa') { for (let j = -2; j <= 2; j++) { ctx.moveTo(p.x - r, p.y + j * r * 0.36 + j * 3); ctx.lineTo(p.x + r, p.y + j * r * 0.36 - r * 0.5); } }
+      else if (g === 'tita' || g === 'dunes') { for (let j = -2; j <= 2; j++) { const yy = p.y + j * r * 0.36; ctx.moveTo(p.x - r, yy); ctx.bezierCurveTo(p.x - r * 0.4, yy - r * 0.25, p.x + r * 0.2, yy + r * 0.25, p.x + r, yy); } }
+      else if (g === 'marte' || g === 'mesa') { ctx.moveTo(p.x - r, p.y + r * 0.3); ctx.lineTo(p.x - r * 0.4, p.y + r * 0.3); ctx.lineTo(p.x - r * 0.4, p.y - r * 0.1); ctx.lineTo(p.x + r * 0.2, p.y - r * 0.1); ctx.lineTo(p.x + r * 0.2, p.y + r * 0.45); ctx.lineTo(p.x + r, p.y + r * 0.45); ctx.moveTo(p.x - r * 0.5, p.y - r * 0.7); ctx.arc(p.x, p.y - r * 1.25, r * 0.75, 2.3, 0.84, true); }
+      else if (g === 'io') { for (const dx of [-0.35, 0.35]) { ctx.moveTo(p.x + (dx - 0.35) * r, p.y + r * 0.4); ctx.lineTo(p.x + (dx - 0.08) * r, p.y - r * 0.15); ctx.lineTo(p.x + (dx + 0.08) * r, p.y - r * 0.15); ctx.lineTo(p.x + (dx + 0.35) * r, p.y + r * 0.4); } }
+      else { for (let j = 0; j < 4; j++) { const an = i * 1.7 + j * 1.9, d = r * (0.25 + 0.17 * j), cr = r * (0.24 - 0.04 * j); ctx.moveTo(p.x + Math.cos(an) * d + cr, p.y + Math.sin(an) * d); ctx.arc(p.x + Math.cos(an) * d, p.y + Math.sin(an) * d, cr, 0, 6.2832); } }
+      ctx.stroke(); ctx.restore();
+      ctx.globalAlpha = 1;
+
+      if (i === sel) {
+        ctx.save(); ctx.translate(p.x, p.y); if (!REDUCED) ctx.rotate(time * 0.5);
+        ctx.strokeStyle = COL.amber; ctx.lineWidth = 1.6; ctx.setLineDash([7, 6]);
+        ctx.beginPath(); ctx.arc(0, 0, r + 8, 0, 6.2832); ctx.stroke(); ctx.restore();
+      }
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.font = (i === sel ? '600 ' : '500 ') + (small ? 11 : 14) + 'px "IBM Plex Mono", monospace';
+      ctx.fillStyle = i === sel ? COL.amber : open ? COL.bone : COL.dim;
+      ctx.fillText(a.name, p.x, p.y + r + 14);
+      ctx.font = '400 ' + (small ? 10 : 11) + 'px "IBM Plex Mono", monospace';
+      ctx.fillStyle = best !== undefined ? COL.ok : COL.dim;
+      const status = !open ? 'bloqueado' : best !== undefined ? '✓ ' + num(best) : (sv.done[a.id + '-0'] ? 'mapa 1 ✓' : 'novo');
+      ctx.fillText(status, p.x, p.y + r + (small ? 29 : 33));
+      if (!small) { ctx.fillStyle = COL.dim; ctx.fillText('fase ' + (i + 1), p.x, p.y - r - 26); }
+    });
+  }
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (state === 'map') drawMap(); else drawWorld();
+  }
+
+  // ---------- Instrumentos ----------
+  const setCls = (el, c) => { if (el.dataset.c !== c) { el.dataset.c = c; el.className = 'inst ' + c; } };
+  function hud() {
+    if (state === 'map') return;
+    const rover = mode === 'rover';
+    if (rover) {
+      const sp = Math.hypot(ship.vx, ship.vy) * Math.sign(ship.vx || 1);
+      $('vVx').textContent = fmt(sp / M);
+      $('vAng').textContent = Math.round(-ship.a * 180 / Math.PI);
+      setCls($('iVx'), ''); setCls($('iAng'), '');
+    } else {
+      const alt = Math.max(0, terrainY(ship.x) - (ship.y + FOOT_Y)) / M;
+      $('vAlt').textContent = Math.round(alt);
+      $('vVx').textContent = fmt(ship.vx / M);
+      $('vVy').textContent = fmt(ship.vy / M);
+      $('vAng').textContent = Math.round(ship.a * 180 / Math.PI);
+      $('vVyMax').textContent = fmt(vyMax() / M);
+      $('vxMax').textContent = ' · máx ' + fmt(vxMax() / M);
+      setCls($('iVx'), Math.abs(ship.vx) <= vxMax() ? 'ok' : 'warn');
+      setCls($('iVy'), ship.vy <= vyMax() ? 'ok' : 'warn');
+      setCls($('iAng'), Math.abs(ship.a) <= ANG_MAX ? 'ok' : 'warn');
+    }
+    $('vFuel').textContent = Math.round(ship.fuel);
+    $('vFuelMax').textContent = '/ ' + fuelMax();
+    $('fuelfill').style.transform = 'scaleX(' + (ship.fuel / fuelMax()).toFixed(3) + ')';
+    setCls($('iFuel'), ship.fuel < 20 ? 'bad' : '');
+    if (!$('iWind').hidden) {
+      const w = windNow() / M, strong = Math.abs(w) > windMax() / M * 0.6;
+      $('vWind').textContent = (Math.abs(w) < 0.15 ? '· ' : w > 0 ? '→ ' : '← ') + fmt(Math.abs(w));
+      setCls($('iWind'), strong ? 'warn' : '');
+    }
+    if (mode !== 'lander') {
+      $('vObj').textContent = (targets.length - targetsLeft()) + '/' + targets.length;
+      setCls($('iObj'), targetsLeft() ? '' : 'ok');
+    }
+    $('vLevel').textContent = astro.name + ' ' + (mapIdx + 1) + '/' + MAPS;
+    $('vLives').textContent = Math.max(lives, 0);
+    $('vScore').textContent = num(score);
+    $('vBest').textContent = S().best[astro.id] !== undefined ? num(S().best[astro.id]) : '—';
+  }
+
+  // ---------- Laço principal ----------
+  let prev = 0;
+  function frame(ts) {
+    const dt = Math.min((ts - prev) / 1000 || 0, 1 / 30);
+    prev = ts;
+    if (state !== 'paused') update(dt);
+    if (bannerT > 0) { bannerT -= dt; if (bannerT <= 0) $('banner').classList.add('off'); }
+    draw();
+    hud();
+    updateTip();
+    requestAnimationFrame(frame);
+  }
+
+  function start(data) {
+    if (data && data.save) { save = mergeSave(save, data.save); persist(); }
+    lives = maxLives();
+    buildLevel();
+    spawnShip();
+    showTitle();
+    requestAnimationFrame(frame);
+  }
+
+  if (window.__LANDER_TEST) window.__lander = {
+    info: () => ({ state, mode, astro: astro.id, mapIdx, sel, lives, score, W, seg, viewW, cam: { ...cam }, ship: { ...ship }, meteors: meteors.length,
+      save: JSON.parse(JSON.stringify(save)), hard, pads: pads.map(p => ({ ...p })), zones: zones.map(z => ({ ...z })), vents: vents.map(v => ({ ...v, x: v.i * seg })),
+      targets: targets.map(t => ({ ...t, y: terrainY(t.x) })), depot, stormX, boulders: boulders.length, diff, heights: heights.slice() }),
+    go(m, i, map) { mode = m; save.modes[m].unlocked = MODES[m].phases.length; startPhase(i); if (map) { mapIdx = map; buildLevel(); spawnShip(); } },
+    place(x, y, vx = 0, vy = 0) { ship.x = x; ship.y = y === null ? terrainY(x) : y; ship.vx = vx; ship.vy = vy; ship.a = 0; ship.grounded = false; },
+    toPad(i) { const p = pads[i]; ship.x = (p.x0 + p.x1) / 2; ship.y = p.y - FOOT_Y - 3; ship.vx = 0; ship.vy = 6; ship.a = 0; ship.grounded = false; },
+    ty: x => terrainY(x),
+    mapPos: () => mapPos,
+  };
+
+  if (TAURI) document.addEventListener('contextmenu', e => e.preventDefault());
+  quietUpdateCheck();
+
+  const hot = window.claude && window.claude.hot;
+  if (hot && hot.snapshot) hot.snapshot(() => ({ save }));
+  if (hot && hot.ready) hot.ready(start); else start((hot && hot.data) || {});
+})();
+</script>
+</body>
+</html>

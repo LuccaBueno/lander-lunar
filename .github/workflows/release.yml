@@ -1,0 +1,58 @@
+# Gera o instalador do Windows e publica a Release no GitHub.
+# Dispara ao enviar uma tag de versão (ex.: v1.0.1), criada pelo comando `npm run versao 1.0.1 "novidades"`.
+# A Release fica só com dois arquivos: o instalador (nome fixo) e o latest.json, que o botão
+# "Verificar atualização" do jogo consulta.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - run: npm ci
+
+      - name: Gerar o instalador
+        run: npx tauri build
+        env:
+          # chave que assina as atualizações (Settings > Secrets and variables > Actions)
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Preparar os arquivos da Release
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git fetch --tags --force
+          export NOVIDADES="$(git tag -l --format='%(contents)' "$TAG")"
+          node .github/scripts/preparar-release.mjs
+
+      - name: Publicar a Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" release/Lander-Lunar-Instalador.exe release/latest.json \
+            --title "Lander Lunar ${TAG#v}" --notes-file release/notas.md --latest
